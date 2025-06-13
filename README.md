@@ -1,4 +1,3 @@
-
 # 🕒 Pomodoro App
 
 A lightweight and efficient **Pomodoro timer application** built with [Tauri](https://tauri.app), combining the power of Rust and the flexibility of JavaScript to deliver a fast and minimal desktop experience.
