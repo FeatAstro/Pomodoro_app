@@ -19,3 +19,61 @@ A lightweight and efficient **Pomodoro timer application** built with [Tauri](ht
 ```bash
 npm install
 npm run tauri dev
+```
+
+---
+
+## 🛠️ Build the Application
+
+```bash
+npm run tauri build
+```
+
+After building, you’ll find your app binaries in:
+```swift
+src-tauri/target/release/bundle/
+```
+
+---
+
+## 🧪 Technologies Used
+
+- 🦀 Rust
+- ⚙️ Tauri
+- 🌐 JavaScript / TypeScript
+- 📦 npm
+
+## 📦 Distribution Formats
+
+| Platform | Format                               |
+| -------- | ------------------------------------ |
+| Windows  | `.msi`, `.exe (NSIS)`                |
+| macOS    | `.dmg`, `.app` (built on macOS only) |
+| Linux    | `.AppImage`, `.deb`, `.rpm`          |
+
+---
+
+##  📜 License
+
+This project is licensed under the MIT License.
+Feel free to use, modify, and distribute it.
+
+---
+
+## 🖼️ Screenshot
+
+Soon
+
+---
+
+## ✨ Coming Soon
+
+- Notification enabled
+- Better colors in Analytics
+- More things
+
+---
+
+## 👤 Author
+
+Created by FeatAstro
