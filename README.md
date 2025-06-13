@@ -1,7 +1,21 @@
-# Tauri + React
+# 🕒 Pomodoro App
 
-This template should help get you started developing with Tauri and React in Vite.
+A lightweight and efficient **Pomodoro timer application** built with [Tauri](https://tauri.app), combining the power of Rust and the flexibility of JavaScript to deliver a fast and minimal desktop experience.
 
-## Recommended IDE Setup
+---
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 🚀 Features
+
+- ⏱️ Pomodoro timer with work / short break / long break cycles
+- 🔔 System notifications when a cycle ends
+- 🎨 Clean and responsive UI
+- 💾 Lightweight binary thanks to Tauri (<10MB)
+- 🧭 Cross-platform (Windows, macOS, Linux)
+
+---
+
+## 🧑‍💻 Run in Development Mode
+
+```bash
+npm install
+npm run tauri dev
