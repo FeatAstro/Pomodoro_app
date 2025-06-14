@@ -68,9 +68,11 @@ Soon
 
 ## ✨ Coming Soon
 
-- Notification enabled
-- Better colors in Analytics
-- More things
+- Fix "How to share data" button
+- Option to not have/have the test mode
+- Use Tailwind CSS properly
+- Fix one warning
+- Fix the time in active tasks when adding an active task during a session
 
 ---
 
