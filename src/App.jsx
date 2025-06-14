@@ -375,7 +375,6 @@ const PomodoroApp = () => {
         );
         setCompletedWorkSession(null);
       }
-
       setIsBreak(false);
     }
   }, [isBreak, mode, completedWorkSession, playFinishSound, playSessionStartSound, updateSessionStreak, saveTimeSession]);
