@@ -5,7 +5,12 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 import { readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
 
 // Memoized sub-components
-const TaskItem = memo(({ task, onComplete, onDelete, isActive = false }) => {
+const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, currentSessionTime = 0, isTimerRunning = false }) => {
+  // Calculate real-time accumulated time for active tasks
+  const displayTime = isActive && currentSessionTime > 0
+    ? (task.accumulatedTime || 0) + Math.floor(currentSessionTime / 60)
+    : (task.accumulatedTime || 0);
+
   return (
     <div className={`group relative overflow-hidden ${isActive ? 'bg-gradient-to-r from-blue-500/10 to-cyan-500/10' : 'bg-gradient-to-r from-emerald-500/10 to-teal-500/10'} backdrop-blur-sm border ${isActive ? 'border-blue-500/20' : 'border-l-4 border-emerald-500/50'} rounded-xl p-3 hover:from-${isActive ? 'blue' : 'emerald'}-500/15 hover:to-${isActive ? 'cyan' : 'teal'}-500/15 transition-all duration-300`}>
       {!isActive && <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/10 rounded-full -translate-y-6 translate-x-6"></div>}
@@ -20,9 +25,12 @@ const TaskItem = memo(({ task, onComplete, onDelete, isActive = false }) => {
             </button>
             <span className="flex-1 text-white/90 font-medium group-hover:text-white transition-colors duration-200">
               {task.text}
-              {task.accumulatedTime > 0 && (
+              {displayTime > 0 && (
                 <span className="text-blue-400/60 text-xs ml-1">
-                  ({Math.round(task.accumulatedTime)}m)
+                  ({Math.round(displayTime)}m)
+                  {isTimerRunning && currentSessionTime > 0 && (
+                    <span className="text-green-400/60"> +{Math.floor(currentSessionTime / 60)}m</span>
+                  )}
                 </span>
               )}
             </span>
@@ -54,6 +62,8 @@ const TaskItem = memo(({ task, onComplete, onDelete, isActive = false }) => {
 });
 
 const SessionHistoryItem = memo(({ session, onDelete }) => {
+  const isStopwatch = session.sessionType === 'stopwatch';
+
   return (
     <div className="flex justify-between items-center p-3 bg-gray-800 rounded-lg shadow-sm">
       <div className="flex-1">
@@ -61,16 +71,30 @@ const SessionHistoryItem = memo(({ session, onDelete }) => {
         <div className="flex gap-4 mt-1 text-sm">
           <div className="flex items-center gap-1 text-indigo-400 font-medium">
             <Target className="w-3 h-3" />
-            {session.workDuration || session.duration || 0} min work
-            {session.breakDuration > 0 && <span className="text-green-400"> + {session.breakDuration}m break</span>}
+            {session.totalMinutes} min total
           </div>
-          <div className="flex items-center gap-1 text-purple-400 font-medium">
-            <Flame className="w-3 h-3" />
-            {session.sessionCount || 0} sessions
-          </div>
-          {session.completedFully && (
-            <div className="flex items-center gap-1 text-emerald-400 font-medium text-xs">
-              ✓ Full cycle
+          {!isStopwatch && (
+            <>
+              <div className="flex items-center gap-1 text-purple-400 font-medium">
+                <Flame className="w-3 h-3" />
+                {session.sessionCount} sessions
+              </div>
+              {session.cycleCount > 0 && (
+                <div className="flex items-center gap-1 text-green-400 font-medium">
+                  <Check className="w-3 h-3" />
+                  {session.cycleCount} cycles
+                </div>
+              )}
+              <div className="flex items-center gap-1 text-orange-400 font-medium">
+                <Flame className="w-3 h-3" />
+                {session.overallStreak} streak
+              </div>
+            </>
+          )}
+          {isStopwatch && (
+            <div className="flex items-center gap-1 text-cyan-400 font-medium">
+              <Clock className="w-3 h-3" />
+              Stopwatch
             </div>
           )}
         </div>
@@ -242,8 +266,12 @@ const PomodoroApp = () => {
   const [currentTask, setCurrentTask] = useState('');
   const [sessionStartTime, setSessionStartTime] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [completedBreak, setCompletedBreak] = useState(false);
-  const [completedWorkSession, setCompletedWorkSession] = useState(null);
+
+  // NEW: Temporary session/cycle tracking (cleared on stop)
+  const [tempSessionCount, setTempSessionCount] = useState(0);
+  const [tempCycleCount, setTempCycleCount] = useState(0);
+  const [tempOverallStreak, setTempOverallStreak] = useState(0);
+  const [tempTotalMinutes, setTempTotalMinutes] = useState(0);
 
   // State
   const [dailyGoal, setDailyGoal] = useState(480);
@@ -277,107 +305,57 @@ const PomodoroApp = () => {
     }
   }, [isBreak, playAlmostSound, playBreakWarningSound]);
 
-  // Callbacks
-  const updateSessionStreak = useCallback((sessionType) => {
-    const sessionValue = sessionType === '25/5' ? 0.5 : 1;
-    const newStreak = currentSessionStreak + sessionValue;
-    setCurrentSessionStreak(newStreak);
-
-    if (newStreak > longestSessionStreak) {
-      setLongestSessionStreak(newStreak);
-    }
-
-    setLastSessionDate(new Date().toISOString());
-  }, [currentSessionStreak, longestSessionStreak]);
-
-  const resetStreak = useCallback(() => {
-    setCurrentSessionStreak(0);
-  }, []);
-
-  const saveTimeSession = useCallback((workDuration, breakDuration = 0, timestamp, sessionType, addToTasks = true) => {
-    const taskForSession = tasks.length > 0 ? tasks[0].text : 'No Title';
-
-    let sessionCount;
-    if (sessionType === '25/5') {
-      sessionCount = 0.5;
-    } else if (sessionType === '50/10') {
-      sessionCount = 1;
-    } else {
-      sessionCount = Math.max(0.5, Math.floor(workDuration / 25) * 0.5);
-    }
-
-    const newSession = {
-      id: Date.now() + Math.random(),
-      workDuration: workDuration,
-      breakDuration: breakDuration,
-      totalDuration: workDuration + breakDuration,
-      timestamp: timestamp.toISOString(),
-      task: taskForSession,
-      sessionCount: sessionCount,
-      sessionType: sessionType,
-      completedFully: breakDuration > 0
-    };
-
-    setTimeHistory(prev => {
-      const exists = prev.some(session =>
-        Math.abs(new Date(session.timestamp).getTime() - new Date(newSession.timestamp).getTime()) < 5000 &&
-        session.task === newSession.task &&
-        Math.abs(session.workDuration - newSession.workDuration) < 2
-      );
-
-      if (exists) return prev;
-      return [...prev, newSession];
-    });
-
-    if (addToTasks && workDuration > 0) {
-      const timeToAdd = breakDuration > 0 ? workDuration + breakDuration : workDuration;
-      setTasks(prev => prev.map(task => ({
-        ...task,
-        accumulatedTime: (task.accumulatedTime || 0) + timeToAdd
-      })));
-    }
-  }, [tasks]);
-
   // Timer complete handler
   const handleTimerComplete = useCallback(() => {
     if (!isBreak) {
+      // Work session completed
       playFinishSound();
 
-      setIsBreak(true);
-      setCompletedBreak(false);
       const workTime = mode === '25/5' ? 25 : 50;
-      setCompletedWorkSession({
-        workDuration: workTime,
-        timestamp: new Date(),
-        mode: mode
+      const sessionValue = mode === '25/5' ? 0.5 : 1;
+
+      // Update temporary counters
+      setTempSessionCount(prev => prev + 1);
+      setTempOverallStreak(prev => prev + sessionValue);
+      setTempTotalMinutes(prev => prev + workTime);
+
+      // Update session streak
+      setCurrentSessionStreak(prev => {
+        const newStreak = prev + sessionValue;
+        if (newStreak > longestSessionStreak) {
+          setLongestSessionStreak(newStreak);
+        }
+        return newStreak;
       });
+
+      // Add time to active tasks
+      setTasks(prev => prev.map(task => ({
+        ...task,
+        accumulatedTime: (task.accumulatedTime || 0) + workTime
+      })));
+
+      setIsBreak(true);
     } else {
+      // Break completed - this completes a full cycle
       playSessionStartSound();
-      setCompletedBreak(true);
 
-      updateSessionStreak(mode);
+      const breakTime = mode === '25/5' ? 5 : 10;
 
-      if (completedWorkSession) {
-        const breakTime = mode === '25/5' ? 5 : 10;
-        const totalSessionTime = completedWorkSession.workDuration + breakTime;
+      // Update temporary counters
+      setTempCycleCount(prev => prev + 1);
+      setTempTotalMinutes(prev => prev + breakTime);
 
-        setTasks(prev => prev.map(task => ({
-          ...task,
-          accumulatedTime: (task.accumulatedTime || 0) + totalSessionTime
-        })));
+      // Add break time to active tasks
+      setTasks(prev => prev.map(task => ({
+        ...task,
+        accumulatedTime: (task.accumulatedTime || 0) + breakTime
+      })));
 
-        saveTimeSession(
-          completedWorkSession.workDuration,
-          breakTime,
-          completedWorkSession.timestamp,
-          mode,
-          false
-        );
-        setCompletedWorkSession(null);
-      }
       setIsBreak(false);
     }
-  }, [isBreak, mode, completedWorkSession, playFinishSound, playSessionStartSound, updateSessionStreak, saveTimeSession]);
+
+    setLastSessionDate(new Date().toISOString());
+  }, [isBreak, mode, longestSessionStreak, playFinishSound, playSessionStartSound]);
 
   // Timer hook
   const timerState = useTimer(mode, isBreak, handleTimerComplete, handleTimeWarning, testMode);
@@ -470,6 +448,24 @@ const PomodoroApp = () => {
     }
   }, [dataFilePath, dailyGoal, tasks, completedTasks, timeHistory, taskHistory, currentSessionStreak, longestSessionStreak, lastSessionDate]);
 
+  // Auto-cleanup completed tasks older than 24 hours
+  useEffect(() => {
+    const cleanupOldTasks = () => {
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      setCompletedTasks(prev =>
+        prev.filter(task => new Date(task.timestamp) > oneDayAgo)
+      );
+    };
+
+    // Run cleanup on load and then every hour
+    cleanupOldTasks();
+    const cleanupInterval = setInterval(cleanupOldTasks, 60 * 60 * 1000); // Every hour
+
+    return () => clearInterval(cleanupInterval);
+  }, []);
+
   // Auto-save on data changes
   useEffect(() => {
     if (isLoaded) saveData();
@@ -502,47 +498,91 @@ const PomodoroApp = () => {
   const stopTimer = useCallback(() => {
     setIsRunning(false);
 
-    let workDuration = 0;
-
+    // Save to permanent history only when stopping
     if (mode === 'stopwatch') {
-      workDuration = Math.floor(sessionElapsedTime / 60);
+      // For stopwatch, just save the elapsed time - no sessions or streaks
+      const workDuration = Math.floor(sessionElapsedTime / 60);
       if (workDuration >= 1) {
-        saveTimeSession(workDuration, 0, new Date(), mode, true);
+        const activeTasks = tasks.length > 0 ? tasks.map(t => t.text).join(', ') : 'No Title';
+
+        const newSession = {
+          id: Date.now() + Math.random(),
+          task: activeTasks,
+          totalMinutes: workDuration,
+          sessionCount: 0, // No sessions for stopwatch
+          cycleCount: 0,   // No cycles for stopwatch
+          overallStreak: 0, // No streak for stopwatch
+          timestamp: new Date().toISOString(),
+          sessionType: mode
+        };
+
+        setTimeHistory(prev => [...prev, newSession]);
+
+        // Add time to tasks
+        setTasks(prev => prev.map(task => ({
+          ...task,
+          accumulatedTime: (task.accumulatedTime || 0) + workDuration
+        })));
       }
     } else {
-      if (isBreak) {
-        if (completedWorkSession) {
+      // For pomodoro modes, save accumulated sessions and cycles
+      let currentSessionMinutes = 0;
+
+      if (sessionElapsedTime > 0) {
+        if (isBreak) {
+          // If stopping during break, add the break time elapsed
+          currentSessionMinutes = Math.floor(sessionElapsedTime / 60);
+        } else {
+          // If stopping during work session, add the work time elapsed
+          currentSessionMinutes = Math.floor(sessionElapsedTime / 60);
+        }
+      }
+
+      const totalMinutesIncludingCurrent = tempTotalMinutes + currentSessionMinutes;
+
+      // Save if there's any meaningful time recorded
+      if (tempSessionCount > 0 || tempCycleCount > 0 || currentSessionMinutes > 0) {
+        // Get all active tasks for the session title
+        const activeTasks = tasks.length > 0 ? tasks.map(t => t.text).join(', ') : 'No Title';
+
+        const newSession = {
+          id: Date.now() + Math.random(),
+          task: activeTasks,
+          totalMinutes: totalMinutesIncludingCurrent,
+          sessionCount: tempSessionCount,
+          cycleCount: tempCycleCount,
+          overallStreak: tempOverallStreak,
+          timestamp: new Date().toISOString(),
+          sessionType: mode
+        };
+
+        setTimeHistory(prev => [...prev, newSession]);
+
+        // Add the current session time to tasks
+        if (currentSessionMinutes > 0) {
           setTasks(prev => prev.map(task => ({
             ...task,
-            accumulatedTime: (task.accumulatedTime || 0) + completedWorkSession.workDuration
+            accumulatedTime: (task.accumulatedTime || 0) + currentSessionMinutes
           })));
-
-          saveTimeSession(
-            completedWorkSession.workDuration,
-            0,
-            completedWorkSession.timestamp,
-            mode,
-            false
-          );
-          setCompletedWorkSession(null);
-        }
-      } else {
-        workDuration = Math.floor(sessionElapsedTime / 60);
-        if (workDuration >= 1) {
-          saveTimeSession(workDuration, 0, new Date(), mode, true);
         }
       }
     }
 
-    resetStreak();
+    // Reset all temporary counters
+    setTempSessionCount(0);
+    setTempCycleCount(0);
+    setTempOverallStreak(0);
+    setTempTotalMinutes(0);
 
+    // Reset timer state
     setTimeLeft(mode === '25/5' ? 25 * 60 : mode === '50/10' ? 50 * 60 : 0);
     setIsBreak(false);
     setSessionStartTime(null);
     setSessionElapsedTime(0);
-    setCompletedBreak(false);
-    setCompletedWorkSession(null);
-  }, [mode, isBreak, sessionElapsedTime, completedWorkSession, saveTimeSession, resetStreak]);
+
+    // Reset session streak (as requested)
+    setCurrentSessionStreak(0);
+  }, [mode, sessionElapsedTime, tempSessionCount, tempCycleCount, tempOverallStreak, tempTotalMinutes, tasks, isBreak]);
 
   const addTask = useCallback(() => {
     if (currentTask.trim()) {
@@ -600,15 +640,29 @@ const PomodoroApp = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }, []);
 
-  // Memoized calculations
+  // Memoized calculations with automatic cleanup and real-time updates
+  const recentCompletedTasks = useMemo(() => {
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    return completedTasks.filter(task => new Date(task.timestamp) > oneDayAgo);
+  }, [completedTasks]);
+
   const totalTimeToday = useMemo(() => {
-    return timeHistory
+    const baseTime = timeHistory
       .filter(entry => entry.timestamp.split('T')[0] === new Date().toISOString().split('T')[0])
-      .reduce((total, entry) => total + (entry.totalDuration || entry.duration || 0), 0);
-  }, [timeHistory]);
+      .reduce((total, entry) => total + (entry.totalMinutes || 0), 0);
+
+    // Add current session time if timer is running or paused
+    const currentSessionMinutes = Math.floor(sessionElapsedTime / 60);
+
+    return baseTime + currentSessionMinutes;
+  }, [timeHistory, sessionElapsedTime]);
 
   const todaySessionCount = useMemo(() => {
-    return timeHistory.filter(s => s.timestamp.split('T')[0] === new Date().toISOString().split('T')[0]).length;
+    return timeHistory
+      .filter(s => s.timestamp.split('T')[0] === new Date().toISOString().split('T')[0])
+      .reduce((total, session) => total + (session.sessionCount || 0), 0);
   }, [timeHistory]);
 
   const getChartData = useCallback((type) => {
@@ -629,7 +683,7 @@ const PomodoroApp = () => {
         data.push({
           date: date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
           value: type === 'time'
-            ? Math.round((dayData.reduce((sum, item) => sum + (item.totalDuration || item.duration || 0), 0) / 60) * 10) / 10
+            ? Math.round((dayData.reduce((sum, item) => sum + (item.totalMinutes || item.duration || 0), 0) / 60) * 10) / 10
             : dayData.length
         });
       }
@@ -646,7 +700,7 @@ const PomodoroApp = () => {
         data.push({
           date: date.getDate().toString(),
           value: type === 'time'
-            ? Math.round((dayData.reduce((sum, item) => sum + (item.totalDuration || item.duration || 0), 0) / 60) * 10) / 10
+            ? Math.round((dayData.reduce((sum, item) => sum + (item.totalMinutes || item.duration || 0), 0) / 60) * 10) / 10
             : dayData.length
         });
       }
@@ -663,7 +717,7 @@ const PomodoroApp = () => {
         data.push({
           date: date.toLocaleDateString('en-US', { month: 'short' }),
           value: type === 'time'
-            ? Math.round((monthData.reduce((sum, item) => sum + (item.totalDuration || item.duration || 0), 0) / 60) * 10) / 10
+            ? Math.round((monthData.reduce((sum, item) => sum + (item.totalMinutes || item.duration || 0), 0) / 60) * 10) / 10
             : monthData.length
         });
       }
@@ -737,27 +791,32 @@ const PomodoroApp = () => {
       setCurrentSessionStreak(0);
       setLongestSessionStreak(0);
       setLastSessionDate(null);
+      // Clear temporary counters too
+      setTempSessionCount(0);
+      setTempCycleCount(0);
+      setTempOverallStreak(0);
+      setTempTotalMinutes(0);
     }
   }, []);
 
   // Instructions Modal Component
   const InstructionsModal = memo(() => (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-gray-700">
-        <div className="p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <HelpCircle className="w-6 h-6 text-indigo-400" />
-              <h2 className="text-2xl font-bold text-white">How to Use & Share Data</h2>
-            </div>
-            <button
-              onClick={() => setShowInstructions(false)}
-              className="w-8 h-8 text-gray-400 hover:text-white hover:bg-gray-700 rounded-full flex items-center justify-center transition-all duration-200"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      <div className="bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl border border-gray-700 flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <HelpCircle className="w-5 h-5 text-indigo-400" />
+            <h2 className="text-xl font-bold text-white">How to Use & Share Data</h2>
           </div>
+          <button
+            onClick={() => setShowInstructions(false)}
+            className="w-8 h-8 text-gray-400 hover:text-white hover:bg-gray-700 rounded-full flex items-center justify-center transition-all duration-200"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
+        <div className="flex-1 overflow-y-auto p-4 min-h-0">
           <div className="space-y-6 text-gray-300">
             <div>
               <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
@@ -767,21 +826,23 @@ const PomodoroApp = () => {
               <ul className="space-y-2 text-sm">
                 <li>• Choose between 25min (Pomodoro) or 50min focus sessions</li>
                 <li>• Add tasks to work on during your sessions</li>
-                <li>• Complete full cycles (work + break) to earn streak points</li>
-                <li>• Your data is automatically saved to your device</li>
+                <li>• <strong>Sessions:</strong> 25/50 min work periods</li>
+                <li>• <strong>Cycles:</strong> Complete work + break periods</li>
+                <li>• Data is only saved when you stop the timer</li>
               </ul>
             </div>
 
             <div>
               <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
                 <Flame className="w-5 h-5 text-orange-400" />
-                Streak System
+                Session & Cycle System
               </h3>
               <ul className="space-y-2 text-sm">
-                <li>• 25min session = 0.5 streak points</li>
-                <li>• 50min session = 1.0 streak points</li>
-                <li>• Streak resets to 0 if you stop the timer early</li>
-                <li>• Streak tracks consecutive sessions in your current work session</li>
+                <li>• <strong>Session:</strong> 25min = 0.5 streak, 50min = 1.0 streak</li>
+                <li>• <strong>Cycle:</strong> Work session + break (25+5 or 50+10 minutes)</li>
+                <li>• History shows sessions completed, cycles completed, and overall streak</li>
+                <li>• Stopping the timer resets current streak to 0</li>
+                <li>• Only saves to history when you press Stop</li>
               </ul>
             </div>
 
@@ -839,7 +900,7 @@ const PomodoroApp = () => {
               <div className="space-y-2 text-sm">
                 <p>The exported file is in JSON format and contains:</p>
                 <ul className="space-y-1 pl-4">
-                  <li>• All your focus sessions and their durations</li>
+                  <li>• All your focus sessions with session/cycle counts</li>
                   <li>• Completed tasks history</li>
                   <li>• Current and longest streak records</li>
                   <li>• Daily goal settings</li>
@@ -870,15 +931,15 @@ const PomodoroApp = () => {
               </div>
             </div>
           </div>
+        </div>
 
-          <div className="mt-8 pt-6 border-t border-gray-700">
-            <button
-              onClick={() => setShowInstructions(false)}
-              className="w-full py-3 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all duration-200 font-semibold"
-            >
-              Got it! Let's focus 🎯
-            </button>
-          </div>
+        <div className="p-4 border-t border-gray-700 flex-shrink-0">
+          <button
+            onClick={() => setShowInstructions(false)}
+            className="w-full py-3 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all duration-200 font-semibold"
+          >
+            Got it! Let's focus 🎯
+          </button>
         </div>
       </div>
     </div>
@@ -981,9 +1042,9 @@ const PomodoroApp = () => {
                             ></div>
                             <div className="flex-1 truncate">
                               <span className="text-white/80">{task.text}</span>
-                              {task.accumulatedTime > 0 && (
+                              {((task.accumulatedTime || 0) + Math.floor(sessionElapsedTime / 60)) > 0 && (
                                 <span className="text-blue-400/60 text-xs ml-1">
-                                  ({Math.round(task.accumulatedTime)}m)
+                                  ({Math.round((task.accumulatedTime || 0) + Math.floor(sessionElapsedTime / 60))}m)
                                 </span>
                               )}
                             </div>
@@ -999,25 +1060,38 @@ const PomodoroApp = () => {
                   )}
                 </div>
 
-                {/* Streak Display */}
-                <div className="absolute top-4 right-4 z-10 w-40">
+                {/* Current Session Stats Display */}
+                <div className="absolute top-4 right-4 z-10 w-48">
                   <div className="backdrop-blur-sm bg-white/5 rounded-lg p-3 border border-white/10 shadow-lg" style={{
                     boxShadow: '0 0 15px rgba(251, 146, 60, 0.25), 0 0 30px rgba(251, 146, 60, 0.08), inset 0 1px 2px rgba(255,255,255,0.05)'
                   }}>
                     <div className="flex items-center gap-2 mb-2">
                       <Flame className="w-3 h-3 text-orange-400" />
-                      <span className="text-xs font-medium text-white/90">Session Streak</span>
+                      <span className="text-xs font-medium text-white/90">Current Work Session</span>
                     </div>
+
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div className="text-center">
+                        <div className="text-sm font-bold text-blue-400">{tempSessionCount}</div>
+                        <div className="text-xs text-white/60">Sessions</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-sm font-bold text-green-400">{tempCycleCount}</div>
+                        <div className="text-xs text-white/60">Cycles</div>
+                      </div>
+                    </div>
+
                     <div className="flex justify-between mb-2">
                       <div className="text-center">
-                        <div className="text-sm font-bold text-orange-400">{currentSessionStreak}</div>
-                        <div className="text-xs text-white/60">Current</div>
+                        <div className="text-sm font-bold text-orange-400">{tempOverallStreak}</div>
+                        <div className="text-xs text-white/60">Streak</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-sm font-bold text-red-400">{longestSessionStreak}</div>
-                        <div className="text-xs text-white/60">Best</div>
+                        <div className="text-sm font-bold text-purple-400">{tempTotalMinutes + Math.floor(sessionElapsedTime / 60)}m</div>
+                        <div className="text-xs text-white/60">Total</div>
                       </div>
                     </div>
+
                     <div className="flex items-center justify-center gap-1">
                       {[...Array(Math.min(Math.floor(currentSessionStreak * 2), 4))].map((_, i) => (
                         <div
@@ -1034,7 +1108,7 @@ const PomodoroApp = () => {
                       )}
                     </div>
                     <div className="text-xs text-white/50 text-center mt-1">
-                      Stop timer = Reset to 0
+                      Stop timer = Save & Reset
                     </div>
                   </div>
                 </div>
@@ -1165,7 +1239,7 @@ const PomodoroApp = () => {
                       <Target className="w-5 h-5 text-indigo-500" />
                     </div>
                     <span className="text-base font-bold text-white">
-                      {todaySessionCount} sessions today
+                      {Math.round(todaySessionCount * 10) / 10} sessions today
                     </span>
                   </div>
 
@@ -1298,6 +1372,8 @@ const PomodoroApp = () => {
                               onComplete={completeTask}
                               onDelete={(id) => setTasks(prev => prev.filter(t => t.id !== id))}
                               isActive={true}
+                              currentSessionTime={sessionElapsedTime}
+                              isTimerRunning={isRunning}
                             />
                           ))
                         )}
@@ -1316,19 +1392,19 @@ const PomodoroApp = () => {
                         </div>
                         <h3 className="text-xl font-semibold text-white/90 tracking-tight">Recently Completed</h3>
                         <div className="ml-auto px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded-full">
-                          <span className="text-sm font-medium text-emerald-400">{completedTasks.length}</span>
+                          <span className="text-sm font-medium text-emerald-400">{recentCompletedTasks.length}</span>
                         </div>
                       </div>
 
                       <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-                        {completedTasks.length === 0 ? (
+                        {recentCompletedTasks.length === 0 ? (
                           <div className="text-center py-8 px-4 rounded-xl bg-gray-700/20 border border-dashed border-white/10">
                             <Check className="w-8 h-8 mx-auto mb-3 text-white/30" />
                             <p className="text-white/40 text-sm">No completed tasks yet</p>
                             <p className="text-white/30 text-xs mt-1">Complete tasks to see them here</p>
                           </div>
                         ) : (
-                          completedTasks.slice(-5).reverse().map((task) => (
+                          recentCompletedTasks.slice(-3).reverse().map((task) => (
                             <TaskItem
                               key={task.id}
                               task={task}
@@ -1432,7 +1508,7 @@ const PomodoroApp = () => {
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
               <div className="bg-indigo-900/30 p-4 rounded-lg text-center">
                 <div className="text-2xl font-bold text-indigo-300">
-                  {timeHistory.reduce((sum, session) => sum + (session.totalDuration || session.duration || 0), 0)}
+                  {timeHistory.reduce((sum, session) => sum + (session.totalMinutes || 0), 0)}
                 </div>
                 <div className="text-sm text-indigo-400">Total Minutes</div>
               </div>
@@ -1446,20 +1522,20 @@ const PomodoroApp = () => {
                 <div className="text-2xl font-bold text-purple-300">
                   {timeHistory.reduce((sum, session) => sum + (session.sessionCount || 0), 0)}
                 </div>
-                <div className="text-sm text-purple-400">Session Count</div>
+                <div className="text-sm text-purple-400">Total Sessions</div>
               </div>
               <div className="bg-orange-900/30 p-4 rounded-lg text-center">
                 <div className="text-2xl font-bold text-orange-300">
-                  {timeHistory.length > 0 ? Math.round(timeHistory.reduce((sum, session) => sum + (session.totalDuration || session.duration || 0), 0) / timeHistory.length) : 0}
+                  {timeHistory.reduce((sum, session) => sum + (session.cycleCount || 0), 0)}
                 </div>
-                <div className="text-sm text-orange-400">Avg Session (min)</div>
+                <div className="text-sm text-orange-400">Total Cycles</div>
               </div>
               <div className="bg-red-900/30 p-4 rounded-lg text-center">
                 <div className="text-2xl font-bold text-red-300 flex items-center justify-center gap-2">
                   <Flame className="w-6 h-6" />
-                  {currentSessionStreak}
+                  {longestSessionStreak}
                 </div>
-                <div className="text-sm text-red-400">Session Streak</div>
+                <div className="text-sm text-red-400">Best Streak</div>
               </div>
             </div>
 
@@ -1472,12 +1548,6 @@ const PomodoroApp = () => {
                   </p>
                 </div>
                 <div className="space-x-2">
-                  <button
-                    onClick={() => playFinishSound()}
-                    className="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
-                  >
-                    🔊 Test Sound
-                  </button>
                   <label className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200 cursor-pointer">
                     Import Data
                     <input
@@ -1521,21 +1591,27 @@ const PomodoroApp = () => {
               <div className="flex justify-between items-center mb-6">
                 <div>
                   <p className="text-gray-300">
-                    View your completed sessions and tasks (Auto-saved to file)
+                    View your completed work sessions with session/cycle counts (Saved when you stop timer)
                   </p>
                 </div>
                 <div className="space-x-2">
                   <button
                     onClick={() => playBreakWarningSound()}
-                    className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-all duration-200"
+                    className="px-2 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-all duration-200"
                   >
                     🔔 Test Warning
                   </button>
                   <button
                     onClick={() => playSessionStartSound()}
-                    className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200"
+                    className="px-2 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200"
                   >
                     🎵 Test Start Sound
+                  </button>
+                  <button
+                    onClick={() => playFinishSound()}
+                    className="px-2 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
+                  >
+                    🔊 Test Sound
                   </button>
                 </div>
               </div>
@@ -1550,10 +1626,10 @@ const PomodoroApp = () => {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-gray-800 rounded-xl shadow-xl p-6">
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-semibold text-white">Time Sessions ({timeHistory.length})</h3>
+                    <h3 className="text-xl font-semibold text-white">Work Sessions ({timeHistory.length})</h3>
                     <button
                       onClick={() => {
-                        if (window.confirm('Are you sure you want to delete all time sessions? This action cannot be undone.')) {
+                        if (window.confirm('Are you sure you want to delete all work sessions? This action cannot be undone.')) {
                           setTimeHistory([]);
                         }
                       }}
@@ -1565,7 +1641,7 @@ const PomodoroApp = () => {
 
                   <div className="bg-gray-700 rounded-lg p-4 max-h-96 overflow-y-auto">
                     {timeHistory.length === 0 ? (
-                      <p className="text-gray-400 italic text-center py-8">No time sessions recorded yet</p>
+                      <p className="text-gray-400 italic text-center py-8">No work sessions recorded yet</p>
                     ) : (
                       <div className="space-y-2">
                         {timeHistory.slice().reverse().map((session) => (
