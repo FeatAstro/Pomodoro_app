@@ -170,7 +170,7 @@ const useTimer = (mode, isBreak, onTimerComplete, onTimeWarning, testMode) => {
             return newTime;
           }
         });
-      }, testMode ? 20 : 1000); // 50x faster in test mode (1000ms / 50 = 20ms)
+      }, testMode ? 5 : 1000); // 50x faster in test mode (1000ms / 50 = 20ms)
     } else {
       clearInterval(intervalRef.current);
     }
@@ -266,20 +266,6 @@ const PomodoroApp = () => {
   // Sound hooks
   const { playFinishSound, playSessionStartSound, playBreakWarningSound, playAlmostSound } = useSound();
 
-  // Notification helper
-  const showNotification = useCallback((title, body, icon = '🍅') => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, {
-        body: body,
-        icon: '/favicon.ico',
-        badge: '/favicon.ico',
-        tag: 'pomodoro-timer',
-        requireInteraction: false,
-        silent: false
-      });
-    }
-  }, []);
-
   // Time warning handler
   const handleTimeWarning = useCallback((timeLeft) => {
     if (timeLeft === 3 || timeLeft === 2 || timeLeft === 1) {
@@ -288,9 +274,8 @@ const PomodoroApp = () => {
 
     if (isBreak && timeLeft === 30) {
       playBreakWarningSound();
-      showNotification('Break ending soon!', 'Get ready to focus again in 30 seconds', '⏰');
     }
-  }, [isBreak, playAlmostSound, playBreakWarningSound, showNotification]);
+  }, [isBreak, playAlmostSound, playBreakWarningSound]);
 
   // Callbacks
   const updateSessionStreak = useCallback((sessionType) => {
@@ -354,11 +339,9 @@ const PomodoroApp = () => {
   }, [tasks]);
 
   // Timer complete handler
-  // Timer complete handler
   const handleTimerComplete = useCallback(() => {
     if (!isBreak) {
       playFinishSound();
-      showNotification('Focus session complete!', `Great work! You've completed a ${mode === '25/5' ? '25' : '50'} minute focus session.`, '✅');
 
       setIsBreak(true);
       setCompletedBreak(false);
@@ -368,10 +351,6 @@ const PomodoroApp = () => {
         timestamp: new Date(),
         mode: mode
       });
-
-      setTimeout(() => {
-        showNotification('Break time!', `Take a ${mode === '25/5' ? '5' : '10'} minute break. You've earned it!`, '☕');
-      }, 1000);
     } else {
       playSessionStartSound();
       setCompletedBreak(true);
@@ -397,10 +376,9 @@ const PomodoroApp = () => {
         setCompletedWorkSession(null);
       }
 
-      showNotification('Break complete!', 'Time to get back to work. Stay focused!', '🎯');
       setIsBreak(false);
     }
-  }, [isBreak, mode, completedWorkSession, playFinishSound, playSessionStartSound, showNotification, updateSessionStreak, saveTimeSession]);
+  }, [isBreak, mode, completedWorkSession, playFinishSound, playSessionStartSound, updateSessionStreak, saveTimeSession]);
 
   // Timer hook
   const timerState = useTimer(mode, isBreak, handleTimerComplete, handleTimeWarning, testMode);
@@ -1172,7 +1150,7 @@ const PomodoroApp = () => {
                       onChange={(e) => setTestMode(e.target.checked)}
                       className="rounded cursor-pointer"
                     />
-                    <span className="font-medium">🚀 Test Mode (50x faster)</span>
+                    <span className="font-medium">🚀 Test Mode (faster)</span>
                   </label>
                   <p className="text-xs text-yellow-300/70 mt-1 ml-6">
                     Accelerates time by 50x for quick testing. A 25-minute session takes 30 seconds.
@@ -1559,12 +1537,6 @@ const PomodoroApp = () => {
                     className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200"
                   >
                     🎵 Test Start Sound
-                  </button>
-                  <button
-                    onClick={() => showNotification('Test Notification', 'This is a test notification from your Pomodoro timer!', '🍅')}
-                    className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-all duration-200"
-                  >
-                    🔔 Test Notification
                   </button>
                 </div>
               </div>
