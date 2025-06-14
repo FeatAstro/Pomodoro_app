@@ -194,7 +194,7 @@ const useTimer = (mode, isBreak, onTimerComplete, onTimeWarning, testMode) => {
             return newTime;
           }
         });
-      }, testMode ? 5 : 1000); // 50x faster in test mode (1000ms / 50 = 20ms)
+      }, testMode ? 5 : 1000);
     } else {
       clearInterval(intervalRef.current);
     }
@@ -256,8 +256,7 @@ const useSound = () => {
 };
 
 const PomodoroApp = () => {
-  // Test mode - accelerates time by 50x
-  // 25 min = 30 seconds, 5 min = 6 seconds, 50 min = 60 seconds, 10 min = 12 seconds
+  // Test mode - accelerates time 
   const [testMode, setTestMode] = useState(false);
 
   // Timer states
@@ -1180,7 +1179,7 @@ const PomodoroApp = () => {
                           )}
                           {testMode && (
                             <div className="absolute -top-2 -right-2 px-2 py-1 bg-yellow-500 text-yellow-900 text-xs font-bold rounded-full shadow-lg animate-pulse">
-                              50x
+                              ++
                             </div>
                           )}
                         </div>
@@ -1226,7 +1225,7 @@ const PomodoroApp = () => {
                     <span className="font-medium">🚀 Test Mode (faster)</span>
                   </label>
                   <p className="text-xs text-yellow-300/70 mt-1 ml-6">
-                    Accelerates time by 50x for quick testing. A 25-minute session takes 30 seconds.
+                    Accelerates time.
                   </p>
                 </div>
               </div>
