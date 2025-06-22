@@ -5,11 +5,14 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 import { readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
 
 // Memoized sub-components
-const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, currentSessionTime = 0, isTimerRunning = false }) => {
-  // Calculate real-time accumulated time for active tasks
-  const displayTime = isActive && currentSessionTime > 0
-    ? (task.accumulatedTime || 0) + Math.floor(currentSessionTime / 60)
-    : (task.accumulatedTime || 0);
+const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, activeTaskId, onSetActive, canChangeActive, taskTimes = {} }) => {
+  // Calculer le temps total pour cette tâche (accumulé + temps de session actuel)
+  const sessionTime = taskTimes[task.id] || 0;
+  const accumulatedTime = task.accumulatedTime || 0;
+  const totalTime = accumulatedTime + sessionTime;
+
+  // Check if this task is the currently active one
+  const isCurrentlyActive = activeTaskId === task.id;
 
   return (
     <div className={`group relative overflow-hidden ${isActive ? 'bg-gradient-to-r from-blue-500/10 to-cyan-500/10' : 'bg-gradient-to-r from-emerald-500/10 to-teal-500/10'} backdrop-blur-sm border ${isActive ? 'border-blue-500/20' : 'border-l-4 border-emerald-500/50'} rounded-xl p-3 hover:from-${isActive ? 'blue' : 'emerald'}-500/15 hover:to-${isActive ? 'cyan' : 'teal'}-500/15 transition-all duration-300`}>
@@ -17,20 +20,42 @@ const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, currentSe
       <div className="relative flex items-center gap-3">
         {isActive ? (
           <>
-            <button
-              onClick={() => onComplete(task.id, task.text)}
-              className="w-6 h-6 rounded-full border-2 border-blue-500/50 hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center transition-all duration-200 group/check hover:shadow-[0_0_8px_rgba(59,130,246,0.4)]"
-            >
-              <Check className="w-4 h-4 text-blue-400 opacity-0 group-hover/check:opacity-100 transition-opacity duration-200" />
-            </button>
+            {/* Radio button for active task selection */}
+            <div className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="activeTask"
+                checked={isCurrentlyActive}
+                onChange={() => canChangeActive && onSetActive(task.id)}
+                disabled={!canChangeActive}
+                className="w-4 h-4 text-blue-500 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
+              />
+              {/* Only show complete button for non-default tasks */}
+              {!task.isDefault && (
+                <button
+                  onClick={() => onComplete(task.id, task.text)}
+                  className="w-6 h-6 rounded-full border-2 border-blue-500/50 hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center transition-all duration-200 group/check hover:shadow-[0_0_8px_rgba(59,130,246,0.4)]"
+                >
+                  <Check className="w-4 h-4 text-blue-400 opacity-0 group-hover/check:opacity-100 transition-opacity duration-200" />
+                </button>
+              )}
+            </div>
+
             <span className="flex-1 text-white/90 font-medium group-hover:text-white transition-colors duration-200">
               {task.text}
-              {displayTime > 0 && (
+              {task.isDefault && (
+                <span className="ml-2 px-2 py-0.5 bg-gray-500/30 text-gray-300 text-xs font-bold rounded-full border border-gray-500/50">
+                  DEFAULT
+                </span>
+              )}
+              {isCurrentlyActive && (
+                <span className="ml-2 px-2 py-0.5 bg-blue-500/30 text-blue-300 text-xs font-bold rounded-full border border-blue-500/50">
+                  ACTIVE
+                </span>
+              )}
+              {totalTime > 0 && (
                 <span className="text-blue-400/60 text-xs ml-1">
-                  ({Math.round(displayTime)}m)
-                  {isTimerRunning && currentSessionTime > 0 && (
-                    <span className="text-green-400/60"> +{Math.floor(currentSessionTime / 60)}m</span>
-                  )}
+                  ({accumulatedTime > 0 ? `${Math.round(accumulatedTime)}+` : ''}{Math.round(sessionTime)}m)
                 </span>
               )}
             </span>
@@ -50,12 +75,16 @@ const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, currentSe
             </div>
           </div>
         )}
-        <button
-          onClick={() => onDelete(task.id)}
-          className="w-6 h-6 text-white/30 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100"
-        >
-          <X className="w-4 h-4" />
-        </button>
+
+        {/* Only show delete button for non-default tasks */}
+        {!task.isDefault && (
+          <button
+            onClick={() => onDelete(task.id)}
+            className="w-6 h-6 text-white/30 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -65,55 +94,114 @@ const SessionHistoryItem = memo(({ session, onDelete }) => {
   const isStopwatch = session.sessionType === 'stopwatch';
 
   return (
-    <div className="flex justify-between items-center p-3 bg-gray-800 rounded-lg shadow-sm">
-      <div className="flex-1">
-        <div className="font-medium text-white">{session.task}</div>
-        <div className="flex gap-4 mt-1 text-sm">
-          <div className="flex items-center gap-1 text-indigo-400 font-medium">
-            <Target className="w-3 h-3" />
-            {session.totalMinutes} min total
+    <div className="group relative overflow-hidden bg-gradient-to-r from-indigo-500/10 to-purple-500/10 backdrop-blur-sm border border-indigo-500/20 rounded-xl p-4 hover:from-indigo-500/15 hover:to-purple-500/15 transition-all duration-300">
+      <div className="absolute top-0 right-0 w-12 h-12 bg-indigo-500/10 rounded-full -translate-y-6 translate-x-6"></div>
+
+      <div className="relative">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center backdrop-blur-sm">
+              <Target className="w-5 h-5 text-indigo-400" />
+            </div>
+            <div>
+              <div className="font-semibold text-white text-lg">{session.task}</div>
+              <div className="text-sm text-indigo-400/80">
+                {new Date(session.timestamp).toLocaleDateString()} at {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </div>
           </div>
-          {!isStopwatch && (
+
+          <button
+            onClick={() => onDelete(session.id)}
+            className="w-8 h-8 text-white/30 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="text-center bg-indigo-900/20 rounded-lg p-2 border border-indigo-500/20">
+            <div className="text-lg font-bold text-indigo-400">{session.totalMinutes}</div>
+            <div className="text-xs text-indigo-300/80">Total Minutes</div>
+          </div>
+
+          {!isStopwatch ? (
             <>
-              <div className="flex items-center gap-1 text-purple-400 font-medium">
-                <Flame className="w-3 h-3" />
-                {session.sessionCount} sessions
+              <div className="text-center bg-purple-900/20 rounded-lg p-2 border border-purple-500/20">
+                <div className="text-lg font-bold text-purple-400">{session.sessionCount}</div>
+                <div className="text-xs text-purple-300/80">Sessions</div>
               </div>
               {session.cycleCount > 0 && (
-                <div className="flex items-center gap-1 text-green-400 font-medium">
-                  <Check className="w-3 h-3" />
-                  {session.cycleCount} cycles
-                </div>
+                <>
+                  <div className="text-center bg-green-900/20 rounded-lg p-2 border border-green-500/20">
+                    <div className="text-lg font-bold text-green-400">{session.cycleCount}</div>
+                    <div className="text-xs text-green-300/80">Cycles</div>
+                  </div>
+                  <div className="text-center bg-orange-900/20 rounded-lg p-2 border border-orange-500/20">
+                    <div className="text-lg font-bold text-orange-400 flex items-center justify-center gap-1">
+                      <Flame className="w-4 h-4" />
+                      {session.overallStreak}
+                    </div>
+                    <div className="text-xs text-orange-300/80">Streak</div>
+                  </div>
+                </>
               )}
-              <div className="flex items-center gap-1 text-orange-400 font-medium">
-                <Flame className="w-3 h-3" />
-                {session.overallStreak} streak
-              </div>
             </>
-          )}
-          {isStopwatch && (
-            <div className="flex items-center gap-1 text-cyan-400 font-medium">
-              <Clock className="w-3 h-3" />
-              Stopwatch
+          ) : (
+            <div className="text-center bg-cyan-900/20 rounded-lg p-2 border border-cyan-500/20">
+              <div className="text-lg font-bold text-cyan-400 flex items-center justify-center gap-1">
+                <Clock className="w-4 h-4" />
+                ∞
+              </div>
+              <div className="text-xs text-cyan-300/80">Stopwatch</div>
             </div>
           )}
         </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <div className="text-right">
-          <div className="text-sm text-gray-400">
-            {new Date(session.timestamp).toLocaleDateString()}
+
+        {/* Task Breakdown */}
+        {session.taskBreakdown && Object.keys(session.taskBreakdown).length > 0 && (
+          <div className="mt-3 pt-3 border-t border-indigo-500/20">
+            <div className="flex items-center gap-2 mb-2">
+              <Target className="w-3 h-3 text-indigo-400" />
+              <span className="text-xs font-medium text-indigo-300">Task Breakdown:</span>
+            </div>
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {Object.entries(session.taskBreakdown).map(([taskName, minutes]) => {
+                if (minutes === 0) return null;
+
+                return (
+                  <div key={taskName} className="flex items-center justify-between text-xs">
+                    <span className="text-white/70 truncate flex-1">
+                      {taskName}
+                    </span>
+                    <span className="font-medium text-indigo-400 ml-2">
+                      {Math.round(minutes)}m
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div className="text-xs text-gray-500">
-            {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </div>
+        )}
+
+        {/* Status indicators at bottom */}
+        <div className="flex items-center justify-center gap-1 mt-3">
+          {[...Array(Math.min(Math.floor(session.overallStreak || 0), 6))].map((_, i) => (
+            <div
+              key={i}
+              className="w-1 h-1 bg-indigo-400 rounded-full animate-pulse"
+              style={{
+                animationDelay: `${i * 150}ms`
+              }}
+            ></div>
+          ))}
+          {(session.overallStreak || 0) > 3 && (
+            <span className="text-xs text-indigo-400 font-medium ml-1">
+              +{Math.floor(((session.overallStreak || 0) - 3) * 2)}
+            </span>
+          )}
         </div>
-        <button
-          onClick={() => onDelete(session.id)}
-          className="w-6 h-6 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200"
-        >
-          <X className="w-3 h-3" />
-        </button>
       </div>
     </div>
   );
@@ -266,11 +354,17 @@ const PomodoroApp = () => {
   const [sessionStartTime, setSessionStartTime] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // NEW: Temporary session/cycle tracking (cleared on stop)
+  // NOUVEAU SYSTÈME DE TEMPS PAR TÂCHE
+  const [activeTaskId, setActiveTaskId] = useState(null);
+  const [taskSessionTimes, setTaskSessionTimes] = useState({}); // Temps de chaque tâche pour la session actuelle
+  const [lastUpdateTime, setLastUpdateTime] = useState(null); // Pour calculer les deltas de temps
+  const [taskSessionNames, setTaskSessionNames] = useState({}); // Track task names for session
+
+  // Temporary session/cycle tracking (cleared on stop)
   const [tempSessionCount, setTempSessionCount] = useState(0);
   const [tempCycleCount, setTempCycleCount] = useState(0);
   const [tempOverallStreak, setTempOverallStreak] = useState(0);
-  const [tempTotalMinutes, setTempTotalMinutes] = useState(0);
+  // CORRECTION: tempTotalMinutes supprimé car redondant avec taskSessionTimes
 
   // State
   const [dailyGoal, setDailyGoal] = useState(480);
@@ -304,19 +398,18 @@ const PomodoroApp = () => {
     }
   }, [isBreak, playAlmostSound, playBreakWarningSound]);
 
-  // Timer complete handler
   const handleTimerComplete = useCallback(() => {
     if (!isBreak) {
       // Work session completed
       playFinishSound();
 
-      const workTime = mode === '25/5' ? 25 : 50;
       const sessionValue = mode === '25/5' ? 0.5 : 1;
 
       // Update temporary counters
       setTempSessionCount(prev => prev + 1);
       setTempOverallStreak(prev => prev + sessionValue);
-      setTempTotalMinutes(prev => prev + workTime);
+      // CORRECTION: Ne pas ajouter automatiquement le temps - il est déjà comptabilisé via taskSessionTimes
+      // setTempTotalMinutes(prev => prev + workTime); // ❌ SUPPRIMÉ - causait le double comptage
 
       // Update session streak
       setCurrentSessionStreak(prev => {
@@ -327,28 +420,15 @@ const PomodoroApp = () => {
         return newStreak;
       });
 
-      // Add time to active tasks
-      setTasks(prev => prev.map(task => ({
-        ...task,
-        accumulatedTime: (task.accumulatedTime || 0) + workTime
-      })));
-
       setIsBreak(true);
     } else {
       // Break completed - this completes a full cycle
       playSessionStartSound();
 
-      const breakTime = mode === '25/5' ? 5 : 10;
-
       // Update temporary counters
       setTempCycleCount(prev => prev + 1);
-      setTempTotalMinutes(prev => prev + breakTime);
-
-      // Add break time to active tasks
-      setTasks(prev => prev.map(task => ({
-        ...task,
-        accumulatedTime: (task.accumulatedTime || 0) + breakTime
-      })));
+      // CORRECTION: Ne pas ajouter automatiquement le temps de pause non plus
+      // setTempTotalMinutes(prev => prev + breakTime); // ❌ SUPPRIMÉ - les pauses ne sont pas comptées dans les tâches
 
       setIsBreak(false);
     }
@@ -359,6 +439,60 @@ const PomodoroApp = () => {
   // Timer hook
   const timerState = useTimer(mode, isBreak, handleTimerComplete, handleTimeWarning, testMode);
   const { timeLeft, isRunning, setIsRunning, sessionElapsedTime, setTimeLeft, setSessionElapsedTime } = timerState;
+
+  // NOUVEAU SYSTÈME: Update du temps pour la tâche active
+  const updateActiveTaskTime = useCallback(() => {
+    if (!isRunning || !activeTaskId) return;
+
+    const now = Date.now();
+    if (!lastUpdateTime) {
+      setLastUpdateTime(now);
+      return;
+    }
+
+    const deltaSeconds = (now - lastUpdateTime) / 1000;
+    const deltaMinutes = testMode ? (deltaSeconds * 200) / 60 : deltaSeconds / 60;
+
+    setTaskSessionTimes(prev => ({
+      ...prev,
+      [activeTaskId]: (prev[activeTaskId] || 0) + deltaMinutes
+    }));
+
+    // Also store the task name
+    const activeTask = tasks.find(t => t.id === activeTaskId);
+    if (activeTask) {
+      setTaskSessionNames(prev => ({
+        ...prev,
+        [activeTaskId]: activeTask.text
+      }));
+    }
+
+    setLastUpdateTime(now);
+  }, [isRunning, activeTaskId, lastUpdateTime, testMode, tasks]);
+
+  // Update task times every second when running
+  useEffect(() => {
+    let interval;
+    if (isRunning && activeTaskId) {
+      // CORRECTION: Intervalle plus fréquent en test mode pour plus de fluidité
+      interval = setInterval(updateActiveTaskTime, testMode ? 50 : 1000); // 50ms en test mode, 1s normal
+    }
+    return () => clearInterval(interval);
+  }, [isRunning, activeTaskId, updateActiveTaskTime, testMode]); // Ajouter testMode dans les dépendances
+
+  // NOUVEAU SYSTÈME: Changement de tâche active
+  const setActiveTask = useCallback((taskId) => {
+    if (!isRunning) return;
+
+    // Mettre à jour le temps de la tâche actuelle avant de changer
+    updateActiveTaskTime();
+
+    // Changer de tâche active
+    setActiveTaskId(taskId);
+    setLastUpdateTime(Date.now());
+
+    console.log('Switched to task:', taskId);
+  }, [isRunning, updateActiveTaskTime]);
 
   // Initialize data file path
   useEffect(() => {
@@ -460,7 +594,7 @@ const PomodoroApp = () => {
 
     // Run cleanup on load and then every hour
     cleanupOldTasks();
-    const cleanupInterval = setInterval(cleanupOldTasks, 60 * 60 * 1000); // Every hour
+    const cleanupInterval = setInterval(cleanupOldTasks, 60 * 60 * 1000);
 
     return () => clearInterval(cleanupInterval);
   }, []);
@@ -485,119 +619,192 @@ const PomodoroApp = () => {
 
   const startTimer = useCallback(() => {
     setIsRunning(true);
+    setLastUpdateTime(Date.now());
+
     if (!sessionStartTime) {
       setSessionStartTime(new Date());
     }
-  }, [sessionStartTime]);
+
+    // Auto-create default task if no tasks exist
+    if (tasks.length === 0) {
+      const defaultTask = {
+        id: Date.now(),
+        text: 'Focus Session',
+        completed: false,
+        accumulatedTime: 0,
+        isDefault: true // Mark as default task
+      };
+      setTasks([defaultTask]);
+      setActiveTaskId(defaultTask.id);
+    }
+    // Auto-select first task if none is selected and tasks exist
+    else if (!activeTaskId && tasks.length > 0) {
+      setActiveTaskId(tasks[0].id);
+    }
+  }, [sessionStartTime, activeTaskId, tasks]);
 
   const pauseTimer = useCallback(() => {
+    // Mettre à jour le temps de la tâche active avant de pauser
+    updateActiveTaskTime();
     setIsRunning(false);
-  }, []);
+    setLastUpdateTime(null);
+  }, [updateActiveTaskTime]);
 
+  // NOUVEAU SYSTÈME: Stop timer avec sauvegarde propre
   const stopTimer = useCallback(() => {
+    // Mettre à jour le temps de la tâche active une dernière fois
+    if (isRunning) {
+      updateActiveTaskTime();
+    }
+
     setIsRunning(false);
 
-    // Save to permanent history only when stopping
+    // Sauvegarder les temps accumulés dans les tâches
+    if (Object.keys(taskSessionTimes).length > 0) {
+      setTasks(prev => prev.map(task => {
+        const sessionTime = taskSessionTimes[task.id] || 0;
+        if (sessionTime > 0) {
+          return {
+            ...task,
+            accumulatedTime: (task.accumulatedTime || 0) + sessionTime
+          };
+        }
+        return task;
+      }));
+    }
+
+    // Calculer le temps total de la session
+    const totalSessionMinutes = Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0);
+
+    // Save to permanent history
+    // Save to permanent history
     if (mode === 'stopwatch') {
-      // For stopwatch, just save the elapsed time - no sessions or streaks
-      const workDuration = Math.floor(sessionElapsedTime / 60);
-      if (workDuration >= 1) {
+      if (totalSessionMinutes >= 1) {
         const activeTasks = tasks.length > 0 ? tasks.map(t => t.text).join(', ') : 'No Title';
+
+        // Create task breakdown with names instead of IDs
+        const taskBreakdownWithNames = {};
+        Object.entries(taskSessionTimes).forEach(([taskId, time]) => {
+          const task = tasks.find(t => t.id === parseInt(taskId));
+          const taskName = task ? task.text : `Task ${taskId}`;
+          if (time > 0) {
+            taskBreakdownWithNames[taskName] = time;
+          }
+        });
 
         const newSession = {
           id: Date.now() + Math.random(),
           task: activeTasks,
-          totalMinutes: workDuration,
-          sessionCount: 0, // No sessions for stopwatch
-          cycleCount: 0,   // No cycles for stopwatch
-          overallStreak: 0, // No streak for stopwatch
+          totalMinutes: Math.round(totalSessionMinutes),
+          sessionCount: 0,
+          cycleCount: 0,
+          overallStreak: 0,
           timestamp: new Date().toISOString(),
-          sessionType: mode
+          sessionType: mode,
+          taskBreakdown: taskBreakdownWithNames
         };
 
         setTimeHistory(prev => [...prev, newSession]);
-
-        // Add time to tasks
-        setTasks(prev => prev.map(task => ({
-          ...task,
-          accumulatedTime: (task.accumulatedTime || 0) + workDuration
-        })));
       }
     } else {
-      // For pomodoro modes, save accumulated sessions and cycles
-      let currentSessionMinutes = 0;
+      // Pour les modes pomodoro
+      const totalMinutesIncludingTemp = totalSessionMinutes;
 
-      if (sessionElapsedTime > 0) {
-        if (isBreak) {
-          // If stopping during break, add the break time elapsed
-          currentSessionMinutes = Math.floor(sessionElapsedTime / 60);
-        } else {
-          // If stopping during work session, add the work time elapsed
-          currentSessionMinutes = Math.floor(sessionElapsedTime / 60);
-        }
-      }
-
-      const totalMinutesIncludingCurrent = tempTotalMinutes + currentSessionMinutes;
-
-      // Save if there's any meaningful time recorded
-      if (tempSessionCount > 0 || tempCycleCount > 0 || currentSessionMinutes > 0) {
-        // Get all active tasks for the session title
+      if (tempSessionCount > 0 || tempCycleCount > 0 || totalSessionMinutes > 0) {
         const activeTasks = tasks.length > 0 ? tasks.map(t => t.text).join(', ') : 'No Title';
+
+        // Create task breakdown with names instead of IDs
+        const taskBreakdownWithNames = {};
+        Object.entries(taskSessionTimes).forEach(([taskId, time]) => {
+          const task = tasks.find(t => t.id === parseInt(taskId));
+          const taskName = task ? task.text : `Task ${taskId}`;
+          if (time > 0) {
+            taskBreakdownWithNames[taskName] = time;
+          }
+        });
 
         const newSession = {
           id: Date.now() + Math.random(),
           task: activeTasks,
-          totalMinutes: totalMinutesIncludingCurrent,
+          totalMinutes: Math.round(totalMinutesIncludingTemp),
           sessionCount: tempSessionCount,
           cycleCount: tempCycleCount,
           overallStreak: tempOverallStreak,
           timestamp: new Date().toISOString(),
-          sessionType: mode
+          sessionType: mode,
+          taskBreakdown: taskBreakdownWithNames
         };
 
         setTimeHistory(prev => [...prev, newSession]);
-
-        // Add the current session time to tasks
-        if (currentSessionMinutes > 0) {
-          setTasks(prev => prev.map(task => ({
-            ...task,
-            accumulatedTime: (task.accumulatedTime || 0) + currentSessionMinutes
-          })));
-        }
       }
     }
 
-    // Reset all temporary counters
+    // Clean up only unused default tasks (those with no time)
+    setTasks(prev => prev.filter(task => {
+      if (task.isDefault) {
+        const sessionTime = taskSessionTimes[task.id] || 0;
+        const totalTime = (task.accumulatedTime || 0) + sessionTime;
+        // Only keep default tasks that have accumulated time
+        return totalTime > 0;
+      }
+      return true; // Keep all non-default tasks
+    }));
+
+    // Reset all states
     setTempSessionCount(0);
     setTempCycleCount(0);
     setTempOverallStreak(0);
-    setTempTotalMinutes(0);
+    setTaskSessionTimes({});
+    setTaskSessionNames({});
+    setActiveTaskId(null);
+    setLastUpdateTime(null);
 
     // Reset timer state
     setTimeLeft(mode === '25/5' ? 25 * 60 : mode === '50/10' ? 50 * 60 : 0);
     setIsBreak(false);
     setSessionStartTime(null);
     setSessionElapsedTime(0);
-
-    // Reset session streak (as requested)
     setCurrentSessionStreak(0);
-  }, [mode, sessionElapsedTime, tempSessionCount, tempCycleCount, tempOverallStreak, tempTotalMinutes, tasks, isBreak]);
+  }, [isRunning, updateActiveTaskTime, taskSessionTimes, tasks, mode, tempSessionCount, tempCycleCount, tempOverallStreak]);
 
   const addTask = useCallback(() => {
     if (currentTask.trim()) {
-      setTasks(prev => [...prev, {
+      const newTask = {
         id: Date.now(),
         text: currentTask,
         completed: false,
         accumulatedTime: 0
-      }]);
+      };
+
+      setTasks(prev => {
+        // If there's only a default task, add the new task and move default to back
+        if (prev.length === 1 && prev[0].isDefault) {
+          return [newTask, prev[0]]; // New task first, default at back
+        } else {
+          // Normal case: just add the new task
+          return [...prev, newTask];
+        }
+      });
+
       setCurrentTask('');
+
+      // Make the new task active if timer is running
+      if (isRunning) {
+        // Update current active task time before switching
+        if (activeTaskId) {
+          updateActiveTaskTime();
+        }
+        setActiveTaskId(newTask.id);
+        setLastUpdateTime(Date.now());
+      }
     }
-  }, [currentTask]);
+  }, [currentTask, isRunning, activeTaskId, updateActiveTaskTime]);
 
   const saveCompletedTask = useCallback((task) => {
     const taskObj = tasks.find(t => t.text === task);
-    const totalTime = taskObj ? (taskObj.accumulatedTime || 0) : 0;
+    const sessionTime = taskObj ? (taskSessionTimes[taskObj.id] || 0) : 0;
+    const accumulatedTime = taskObj ? (taskObj.accumulatedTime || 0) : 0;
+    const totalTime = accumulatedTime + sessionTime;
 
     const newTask = {
       id: Date.now() + Math.random(),
@@ -607,13 +814,55 @@ const PomodoroApp = () => {
     };
 
     setTaskHistory(prev => [...prev, newTask]);
-  }, [tasks, mode, timeLeft]);
+  }, [tasks, mode, timeLeft, taskSessionTimes]);
 
   const completeTask = useCallback((taskId, taskText) => {
+    // Si on complète la tâche actuellement active, la désactiver
+    if (taskId === activeTaskId) {
+      if (isRunning) {
+        updateActiveTaskTime();
+      }
+
+      // Find next task to activate
+      const currentTaskIndex = tasks.findIndex(t => t.id === taskId);
+      let nextActiveTaskId = null;
+
+      // Look for next non-default task first
+      for (let i = currentTaskIndex + 1; i < tasks.length; i++) {
+        if (!tasks[i].isDefault) {
+          nextActiveTaskId = tasks[i].id;
+          break;
+        }
+      }
+
+      // If no non-default task found after current, look before current
+      if (!nextActiveTaskId) {
+        for (let i = 0; i < currentTaskIndex; i++) {
+          if (!tasks[i].isDefault) {
+            nextActiveTaskId = tasks[i].id;
+            break;
+          }
+        }
+      }
+
+      // If still no non-default task, use default task
+      if (!nextActiveTaskId) {
+        const defaultTask = tasks.find(t => t.isDefault);
+        if (defaultTask) {
+          nextActiveTaskId = defaultTask.id;
+        }
+      }
+
+      setActiveTaskId(nextActiveTaskId);
+      if (isRunning && nextActiveTaskId) {
+        setLastUpdateTime(Date.now());
+      }
+    }
+
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setCompletedTasks(prev => [...prev, { id: taskId, text: taskText, timestamp: new Date() }]);
     saveCompletedTask(taskText);
-  }, [saveCompletedTask]);
+  }, [saveCompletedTask, activeTaskId, isRunning, updateActiveTaskTime, tasks]);
 
   const deleteTimeSession = useCallback((sessionId) => {
     if (window.confirm('Are you sure you want to delete this session?')) {
@@ -653,10 +902,10 @@ const PomodoroApp = () => {
       .reduce((total, entry) => total + (entry.totalMinutes || 0), 0);
 
     // Add current session time if timer is running or paused
-    const currentSessionMinutes = Math.floor(sessionElapsedTime / 60);
+    const currentSessionMinutes = Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0);
 
     return baseTime + currentSessionMinutes;
-  }, [timeHistory, sessionElapsedTime]);
+  }, [timeHistory, taskSessionTimes]);
 
   const todaySessionCount = useMemo(() => {
     return timeHistory
@@ -794,7 +1043,13 @@ const PomodoroApp = () => {
       setTempSessionCount(0);
       setTempCycleCount(0);
       setTempOverallStreak(0);
-      setTempTotalMinutes(0);
+      // CORRECTION: tempTotalMinutes supprimé car redondant
+      // Clear task tracking
+      setActiveTaskId(null);
+      setTaskSessionTimes({});
+      setLastUpdateTime(null);
+      setTaskSessionNames({});
+
     }
   }, []);
 
@@ -1018,48 +1273,60 @@ const PomodoroApp = () => {
               <div className="bg-gradient-to-br from-[#1a2331] to-[#0e111a] rounded-2xl border border-[#1a2331] shadow-[inset_0_1px_3px_rgba(255,255,255,0.05),0_35px_60px_-15px_rgba(0,0,0,0.5)] p-8 mb-6 relative">
                 {/* Active Tasks Display */}
                 <div className="absolute top-4 left-4 z-10 w-52">
-                  {tasks.length > 0 && (
+                  {activeTaskId && tasks.length > 0 && (
                     <div className="backdrop-blur-sm bg-white/5 rounded-lg p-3 border border-white/10 shadow-lg" style={{
                       boxShadow: '0 0 15px rgba(59, 130, 246, 0.25), 0 0 30px rgba(59, 130, 246, 0.08), inset 0 1px 2px rgba(255,255,255,0.05)'
                     }}>
                       <div className="flex items-center gap-2 mb-2">
                         <Target className="w-3 h-3 text-blue-400" />
-                        <span className="text-xs font-medium text-white/90">Active Tasks</span>
+                        <span className="text-xs font-medium text-white/90">Active Task</span>
                       </div>
-                      <div className="space-y-1.5 max-h-24 overflow-y-auto">
-                        {tasks.slice(0, 2).map((task, index) => (
-                          <div
-                            key={task.id}
-                            className="flex items-center gap-2 text-xs"
-                          >
-                            <div
-                              className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0"
-                              style={{
-                                animation: `tickleDot 1.5s ease-in-out infinite`,
-                                animationDelay: `${index * 0.2}s`
-                              }}
-                            ></div>
-                            <div className="flex-1 truncate">
-                              <span className="text-white/80">{task.text}</span>
-                              {((task.accumulatedTime || 0) + Math.floor(sessionElapsedTime / 60)) > 0 && (
-                                <span className="text-blue-400/60 text-xs ml-1">
-                                  ({Math.round((task.accumulatedTime || 0) + Math.floor(sessionElapsedTime / 60))}m)
-                                </span>
-                              )}
+                      <div className="space-y-1.5">
+                        {(() => {
+                          const activeTask = tasks.find(t => t.id === activeTaskId);
+                          if (!activeTask) return null;
+
+                          const sessionTime = taskSessionTimes[activeTask.id] || 0;
+                          const accumulatedTime = activeTask.accumulatedTime || 0;
+                          const totalTime = accumulatedTime + sessionTime;
+
+                          return (
+                            <div className="flex items-center gap-2 text-xs">
+                              <div
+                                className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0"
+                                style={{
+                                  animation: `tickleDot 1.5s ease-in-out infinite`
+                                }}
+                              ></div>
+                              <div className="flex-1">
+                                <div className="text-white/80 font-medium">{activeTask.text}</div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  {accumulatedTime > 0 && (
+                                    <span className="text-blue-400/60 text-xs">
+                                      Previous: {Math.round(accumulatedTime)}m
+                                    </span>
+                                  )}
+                                  {sessionTime > 0 && (
+                                    <span className="text-green-400/60 text-xs">
+                                      Session: +{Math.round(sessionTime)}m
+                                    </span>
+                                  )}
+                                  {totalTime > 0 && (
+                                    <span className="text-purple-400/60 text-xs">
+                                      Total: {Math.round(totalTime)}m
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                        {tasks.length > 2 && (
-                          <div className="text-xs text-white/50 text-center pt-1">
-                            +{tasks.length - 2} more
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Current Session Stats Display */}
+                {/* Current Session Stats */}
                 <div className="absolute top-4 right-4 z-10 w-48">
                   <div className="backdrop-blur-sm bg-white/5 rounded-lg p-3 border border-white/10 shadow-lg" style={{
                     boxShadow: '0 0 15px rgba(251, 146, 60, 0.25), 0 0 30px rgba(251, 146, 60, 0.08), inset 0 1px 2px rgba(255,255,255,0.05)'
@@ -1086,12 +1353,51 @@ const PomodoroApp = () => {
                         <div className="text-xs text-white/60">Streak</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-sm font-bold text-purple-400">{tempTotalMinutes + Math.floor(sessionElapsedTime / 60)}m</div>
+                        <div className="text-sm font-bold text-purple-400">
+                          {Math.round(Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0))}m
+                        </div>
                         <div className="text-xs text-white/60">Total</div>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-center gap-1">
+                    {/* Task breakdown display */}
+                    {Object.keys(taskSessionTimes).length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-white/10">
+                        <div className="text-xs text-white/70 mb-1">Task Time:</div>
+                        <div className="space-y-1 max-h-16 overflow-y-auto">
+                          {Object.entries(taskSessionTimes).map(([taskId, minutes]) => {
+                            if (minutes === 0) return null;
+
+                            // Use stored task name first (this is the key fix)
+                            const storedName = taskSessionNames[taskId];
+
+                            // Fallback to finding current task
+                            const currentTask = tasks.find(t => t.id === parseInt(taskId));
+
+                            // For completed tasks, we need to find by text since they get new IDs
+                            // But we should rely on storedName primarily
+                            const taskName = storedName || currentTask?.text || `Task ID: ${taskId}`;
+
+                            const isActive = parseInt(taskId) === activeTaskId;
+                            const isCompleted = !currentTask && storedName; // If we have stored name but no current task, it's completed
+
+                            return (
+                              <div key={taskId} className="flex items-center justify-between text-xs">
+                                <span className={`truncate flex-1 ${isActive ? 'text-blue-300' : isCompleted ? 'text-green-300' : 'text-white/60'}`}>
+                                  {isActive && '→ '}{taskName}
+                                  {isCompleted && ' ✓'}
+                                </span>
+                                <span className={`font-medium ml-1 ${isActive ? 'text-blue-400' : isCompleted ? 'text-green-400' : 'text-white/70'}`}>
+                                  {Math.round(minutes)}m
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-center gap-1 mt-2">
                       {[...Array(Math.min(Math.floor(currentSessionStreak * 2), 4))].map((_, i) => (
                         <div
                           key={i}
@@ -1186,6 +1492,26 @@ const PomodoroApp = () => {
                       </div>
                     </div>
 
+                    {/* Active Task Indicator */}
+                    {activeTaskId && tasks.length > 0 && (
+                      <div className="mb-6 text-center">
+                        <div className="inline-flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 border border-blue-500/30 rounded-2xl backdrop-blur-sm shadow-lg">
+                          <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse shadow-lg" style={{
+                            boxShadow: '0 0 10px rgba(59, 130, 246, 0.8)'
+                          }}></div>
+                          <div className="text-center">
+                            <div className="text-blue-300 font-medium text-sm">Currently Working On</div>
+                            <div className="text-white font-semibold text-lg">{tasks.find(t => t.id === activeTaskId)?.text || 'Unknown Task'}</div>
+                            {isRunning && taskSessionTimes[activeTaskId] > 0 && (
+                              <div className="text-green-400 text-xs font-medium mt-1">
+                                +{Math.round(taskSessionTimes[activeTaskId])} min this session
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Timer Controls */}
                     <div className="flex gap-4 w-full max-w-md">
                       <button
@@ -1222,11 +1548,18 @@ const PomodoroApp = () => {
                       onChange={(e) => setTestMode(e.target.checked)}
                       className="rounded cursor-pointer"
                     />
-                    <span className="font-medium">🚀 Test Mode (faster)</span>
+                    <span className="font-medium">🚀 Test Mode (200x faster)</span>
                   </label>
                   <p className="text-xs text-yellow-300/70 mt-1 ml-6">
-                    Accelerates time.
+                    Accelerates both timer AND task time tracking for testing. Perfect for testing task switching, time accumulation, and save functionality!
                   </p>
+                  {testMode && (
+                    <div className="mt-2 p-2 bg-yellow-800/30 rounded border border-yellow-500/50">
+                      <div className="text-xs text-yellow-200 font-medium">
+                        ⚡ Test mode active: 1 real second = ~3.3 minutes of task time
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1265,7 +1598,7 @@ const PomodoroApp = () => {
                         <Clock className="w-3 h-3 text-green-400" />
                       </div>
                       <span className="text-sm font-bold text-green-400">
-                        {Math.floor(totalTimeToday / 60)}h {totalTimeToday % 60}m
+                        {Math.floor(totalTimeToday / 60)}h {Math.round(totalTimeToday % 60)}m
                       </span>
                     </div>
                   </div>
@@ -1336,8 +1669,53 @@ const PomodoroApp = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* Debug info */}
+                <div className="mt-4 p-3 bg-green-900/30 rounded-lg border border-green-500/30">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Target className="w-4 h-4 text-green-400" />
+                    <span className="text-sm font-medium text-green-300">NOUVEAU SYSTÈME - Temps par tâche indépendant</span>
+                    {testMode && <span className="text-xs bg-yellow-500 text-yellow-900 px-2 py-0.5 rounded-full font-bold">TEST MODE 200x</span>}
+                  </div>
+                  <ul className="text-xs text-green-300/80 space-y-1">
+                    <li>• ✅ Chaque tâche a son propre temps indépendant</li>
+                    <li>• ✅ Le changement de tâche active fige le temps de la précédente</li>
+                    <li>• ✅ Temps affiché en temps réel dans "Active Tasks"</li>
+                    <li>• ✅ Sauvegarde globale + breakdown par tâche au stop</li>
+                    <li>• ✅ Test mode accélère aussi le temps des tâches (200x)</li>
+                  </ul>
+                  <div className="mt-2 p-2 bg-gray-800/50 rounded border border-gray-600/30 space-y-1">
+                    <div className="text-xs text-gray-300">
+                      Active Task ID: {activeTaskId || 'None'}
+                    </div>
+                    <div className="text-xs text-gray-300">
+                      Task Session Times: {JSON.stringify(taskSessionTimes, null, 2)}
+                    </div>
+                    <div className="text-xs text-gray-300">
+                      Total Session Time: {Math.round(Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0))}m
+                    </div>
+                    {testMode && (
+                      <div className="text-xs text-yellow-300 font-medium">
+                        🚀 Test Mode: Time accelerated 200x for quick testing!
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
+              {/* Add this temporary debug section after your existing debug info */}
+              <div className="mt-2 p-2 bg-blue-800/50 rounded border border-blue-600/30 space-y-1">
+                <div className="text-xs text-blue-300 font-medium">Debug: Task Session Names</div>
+                <div className="text-xs text-blue-200">
+                  Task Session Names: {JSON.stringify(taskSessionNames, null, 2)}
+                </div>
+                <div className="text-xs text-blue-200">
+                  Current Active Task ID: {activeTaskId}
+                </div>
+                <div className="text-xs text-blue-200">
+                  Active Task Name: {tasks.find(t => t.id === activeTaskId)?.text || 'None'}
+                </div>
+              </div>
               {/* Task Management Section */}
               <div className="mt-8">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -1369,10 +1747,52 @@ const PomodoroApp = () => {
                               key={task.id}
                               task={task}
                               onComplete={completeTask}
-                              onDelete={(id) => setTasks(prev => prev.filter(t => t.id !== id))}
+                              onDelete={(id) => {
+                                if (id === activeTaskId && isRunning) {
+                                  // Find next task before deleting
+                                  const currentTaskIndex = tasks.findIndex(t => t.id === id);
+                                  let nextActiveTaskId = null;
+
+                                  // Look for next non-default task first
+                                  for (let i = currentTaskIndex + 1; i < tasks.length; i++) {
+                                    if (!tasks[i].isDefault) {
+                                      nextActiveTaskId = tasks[i].id;
+                                      break;
+                                    }
+                                  }
+
+                                  // If no non-default task found after current, look before current
+                                  if (!nextActiveTaskId) {
+                                    for (let i = 0; i < currentTaskIndex; i++) {
+                                      if (!tasks[i].isDefault) {
+                                        nextActiveTaskId = tasks[i].id;
+                                        break;
+                                      }
+                                    }
+                                  }
+
+                                  // If still no non-default task, use default task
+                                  if (!nextActiveTaskId) {
+                                    const defaultTask = tasks.find(t => t.isDefault);
+                                    if (defaultTask) {
+                                      nextActiveTaskId = defaultTask.id;
+                                    }
+                                  }
+
+                                  updateActiveTaskTime();
+                                  setActiveTaskId(nextActiveTaskId);
+                                  if (nextActiveTaskId) {
+                                    setLastUpdateTime(Date.now());
+                                  }
+                                }
+
+                                setTasks(prev => prev.filter(t => t.id !== id));
+                              }}
                               isActive={true}
-                              currentSessionTime={sessionElapsedTime}
-                              isTimerRunning={isRunning}
+                              activeTaskId={activeTaskId}
+                              onSetActive={setActiveTask}
+                              canChangeActive={isRunning}
+                              taskTimes={taskSessionTimes}
                             />
                           ))
                         )}
