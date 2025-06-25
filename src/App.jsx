@@ -1,8 +1,176 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import ReactDOM from 'react-dom';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from 'recharts';
 import { Play, Pause, Square, Plus, Check, Clock, BarChart3, Calendar, CalendarDays, CalendarRange, Target, X, History, Flame, Bell, HelpCircle, Download, Upload, FileText } from 'lucide-react';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import { readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
+
+// Separate Modal Component using Portal - with proper design
+const InstructionsModalPortal = ({ isOpen, onClose }) => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
+  if (!mounted || !isOpen) return null;
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-2xl max-w-2xl w-full shadow-2xl border border-gray-700">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-700">
+          <div className="flex items-center gap-3">
+            <HelpCircle className="w-5 h-5 text-indigo-400" />
+            <h2 className="text-xl font-bold text-white">How to Use & Share Data</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 text-gray-400 hover:text-white hover:bg-gray-700 rounded-full flex items-center justify-center transition-all duration-200"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div
+          className="p-6"
+          style={{
+            height: '500px',
+            overflowY: 'auto'
+          }}
+        >
+          <div className="space-y-6 text-gray-300">
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Target className="w-5 h-5 text-indigo-400" />
+                Basic Usage
+              </h3>
+              <ul className="space-y-2 text-sm">
+                <li>• Choose between 25min (Pomodoro) or 50min focus sessions</li>
+                <li>• Add tasks to work on during your sessions</li>
+                <li>• <strong>Sessions:</strong> 25/50 min work periods</li>
+                <li>• <strong>Cycles:</strong> Complete work + break periods</li>
+                <li>• Data is only saved when you stop the timer</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Flame className="w-5 h-5 text-orange-400" />
+                Session & Cycle System
+              </h3>
+              <ul className="space-y-2 text-sm">
+                <li>• <strong>Session:</strong> 25min = 0.5 streak, 50min = 1.0 streak</li>
+                <li>• <strong>Cycle:</strong> Work session + break (25+5 or 50+10 minutes)</li>
+                <li>• History shows sessions completed, cycles completed, and overall streak</li>
+                <li>• Stopping the timer resets current streak to 0</li>
+                <li>• Only saves to history when you press Stop</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Download className="w-5 h-5 text-green-400" />
+                Exporting Your Data
+              </h3>
+              <div className="space-y-3 text-sm">
+                <p>To share your data with friends or backup your progress:</p>
+                <ol className="space-y-2 pl-4">
+                  <li>1. Go to the <strong>Analytics</strong> tab</li>
+                  <li>2. Scroll down to "Data Management" section</li>
+                  <li>3. Click <strong>"Export Data"</strong> button</li>
+                  <li>4. A JSON file will be downloaded to your computer</li>
+                  <li>5. Share this file with friends or keep it as a backup</li>
+                </ol>
+                <div className="bg-indigo-900/30 p-3 rounded-lg border border-indigo-500/30">
+                  <p className="text-indigo-300 text-xs">
+                    💡 <strong>Tip:</strong> The exported file contains all your sessions, tasks, streak data, and settings.
+                    It's perfect for backing up your progress or sharing achievements!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Upload className="w-5 h-5 text-blue-400" />
+                Importing Data
+              </h3>
+              <div className="space-y-3 text-sm">
+                <p>To load data from a friend or restore a backup:</p>
+                <ol className="space-y-2 pl-4">
+                  <li>1. Go to the <strong>Analytics</strong> tab</li>
+                  <li>2. Scroll down to "Data Management" section</li>
+                  <li>3. Click <strong>"Import Data"</strong> button</li>
+                  <li>4. Select the JSON file you want to import</li>
+                  <li>5. Confirm the import (this will replace your current data)</li>
+                </ol>
+                <div className="bg-red-900/30 p-3 rounded-lg border border-red-500/30">
+                  <p className="text-red-300 text-xs">
+                    ⚠️ <strong>Warning:</strong> Importing will completely replace your current data.
+                    Make sure to export your current data first if you want to keep it!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-purple-400" />
+                File Format
+              </h3>
+              <div className="space-y-2 text-sm">
+                <p>The exported file is in JSON format and contains:</p>
+                <ul className="space-y-1 pl-4">
+                  <li>• All your focus sessions with session/cycle counts</li>
+                  <li>• Completed tasks history</li>
+                  <li>• Current and longest streak records</li>
+                  <li>• Daily goal settings</li>
+                  <li>• Active tasks list</li>
+                </ul>
+                <div className="bg-gray-700/50 p-3 rounded-lg border border-gray-600">
+                  <p className="text-gray-300 text-xs">
+                    📁 File name format: <code>pomodoro-data-YYYY-MM-DD.json</code>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Flame className="w-5 h-5 text-yellow-400" />
+                Sharing with Friends
+              </h3>
+              <div className="space-y-2 text-sm">
+                <p>Great ways to use the export/import feature:</p>
+                <ul className="space-y-1 pl-4">
+                  <li>• Share your productivity achievements</li>
+                  <li>• Compare focus session streaks with friends</li>
+                  <li>• Backup your data before trying new strategies</li>
+                  <li>• Transfer data between devices</li>
+                  <li>• Create challenges by sharing goal targets</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-gray-700">
+          <button
+            onClick={onClose}
+            className="w-full py-3 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all duration-200 font-semibold"
+          >
+            Got it! Let's focus 🎯
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
 
 // Memoized sub-components
 const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, activeTaskId, onSetActive, canChangeActive, taskTimes = {} }) => {
@@ -42,7 +210,7 @@ const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, activeTas
             </div>
 
             <span className="flex-1 text-white/90 font-medium group-hover:text-white transition-colors duration-200">
-              {task.text}
+              {task.text.length > 25 ? `${task.text.substring(0, 25)}...` : task.text}
               {task.isDefault && (
                 <span className="ml-2 px-2 py-0.5 bg-gray-500/30 text-gray-300 text-xs font-bold rounded-full border border-gray-500/50">
                   DEFAULT
@@ -90,151 +258,205 @@ const TaskItem = memo(({ task, onComplete, onDelete, isActive = false, activeTas
   );
 });
 
-const SessionHistoryItem = memo(({ session, onDelete }) => {
+const SessionHistoryItem = memo(({ session, onDelete, isExpanded, onToggle }) => {
   const isStopwatch = session.sessionType === 'stopwatch';
 
   return (
-    <div className="group relative overflow-hidden bg-gradient-to-r from-indigo-500/10 to-purple-500/10 backdrop-blur-sm border border-indigo-500/20 rounded-xl p-4 hover:from-indigo-500/15 hover:to-purple-500/15 transition-all duration-300">
-      <div className="absolute top-0 right-0 w-12 h-12 bg-indigo-500/10 rounded-full -translate-y-6 translate-x-6"></div>
+    <div className="group relative bg-gradient-to-r from-indigo-500/8 to-purple-500/8 backdrop-blur-sm border border-indigo-500/15 rounded-lg overflow-hidden hover:from-indigo-500/12 hover:to-purple-500/12 transition-all duration-300">
+      {/* Compact Header - Always Visible */}
+      <div
+        className="flex items-center justify-between p-3 cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3 flex-1">
+          <div className={`w-7 h-7 rounded-full ${session.sessionType === '25/5' ? 'bg-green-500/20 border border-green-500/30' :
+            session.sessionType === '50/10' ? 'bg-blue-500/20 border border-blue-500/30' :
+              'bg-purple-500/20 border border-purple-500/30'
+            } flex items-center justify-center`}>
+            {session.sessionType === '25/5' ? (
+              <div className="text-green-400 font-bold text-xs">25</div>
+            ) : session.sessionType === '50/10' ? (
+              <div className="text-blue-400 font-bold text-xs">50</div>
+            ) : (
+              <Clock className="w-3 h-3 text-purple-400" />
+            )}
+          </div>
 
-      <div className="relative">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center backdrop-blur-sm">
-              <Target className="w-5 h-5 text-indigo-400" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-white text-sm">
+              {session.task.length > 25 ? `${session.task.substring(0, 25)}...` : session.task}
             </div>
-            <div>
-              <div className="font-semibold text-white text-lg">{session.task}</div>
-              <div className="text-sm text-indigo-400/80">
-                {new Date(session.timestamp).toLocaleDateString()} at {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
+            <div className="text-xs text-gray-400">
+              {new Date(session.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {session.totalMinutes}m
+              {!isStopwatch && ` • ${session.sessionCount}s • ${session.cycleCount}c`}
             </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
+            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
           </div>
 
           <button
-            onClick={() => onDelete(session.id)}
-            className="w-8 h-8 text-white/30 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(session.id);
+            }}
+            className="w-6 h-6 text-white/30 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3 h-3" />
           </button>
         </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div className="text-center bg-indigo-900/20 rounded-lg p-2 border border-indigo-500/20">
-            <div className="text-lg font-bold text-indigo-400">{session.totalMinutes}</div>
-            <div className="text-xs text-indigo-300/80">Total Minutes</div>
-          </div>
-
-          {!isStopwatch ? (
-            <>
-              <div className="text-center bg-purple-900/20 rounded-lg p-2 border border-purple-500/20">
-                <div className="text-lg font-bold text-purple-400">{session.sessionCount}</div>
-                <div className="text-xs text-purple-300/80">Sessions</div>
-              </div>
-              {session.cycleCount > 0 && (
-                <>
-                  <div className="text-center bg-green-900/20 rounded-lg p-2 border border-green-500/20">
-                    <div className="text-lg font-bold text-green-400">{session.cycleCount}</div>
-                    <div className="text-xs text-green-300/80">Cycles</div>
-                  </div>
-                  <div className="text-center bg-orange-900/20 rounded-lg p-2 border border-orange-500/20">
-                    <div className="text-lg font-bold text-orange-400 flex items-center justify-center gap-1">
-                      <Flame className="w-4 h-4" />
-                      {session.overallStreak}
-                    </div>
-                    <div className="text-xs text-orange-300/80">Streak</div>
-                  </div>
-                </>
-              )}
-            </>
-          ) : (
-            <div className="text-center bg-cyan-900/20 rounded-lg p-2 border border-cyan-500/20">
-              <div className="text-lg font-bold text-cyan-400 flex items-center justify-center gap-1">
-                <Clock className="w-4 h-4" />
-                ∞
-              </div>
-              <div className="text-xs text-cyan-300/80">Stopwatch</div>
-            </div>
-          )}
-        </div>
-
-        {/* Task Breakdown */}
-        {session.taskBreakdown && Object.keys(session.taskBreakdown).length > 0 && (
-          <div className="mt-3 pt-3 border-t border-indigo-500/20">
-            <div className="flex items-center gap-2 mb-2">
-              <Target className="w-3 h-3 text-indigo-400" />
-              <span className="text-xs font-medium text-indigo-300">Task Breakdown:</span>
-            </div>
-            <div className="space-y-1 max-h-20 overflow-y-auto">
-              {Object.entries(session.taskBreakdown).map(([taskName, minutes]) => {
-                if (minutes === 0) return null;
-
-                return (
-                  <div key={taskName} className="flex items-center justify-between text-xs">
-                    <span className="text-white/70 truncate flex-1">
-                      {taskName}
-                    </span>
-                    <span className="font-medium text-indigo-400 ml-2">
-                      {Math.round(minutes)}m
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Status indicators at bottom */}
-        <div className="flex items-center justify-center gap-1 mt-3">
-          {[...Array(Math.min(Math.floor(session.overallStreak || 0), 6))].map((_, i) => (
-            <div
-              key={i}
-              className="w-1 h-1 bg-indigo-400 rounded-full animate-pulse"
-              style={{
-                animationDelay: `${i * 150}ms`
-              }}
-            ></div>
-          ))}
-          {(session.overallStreak || 0) > 3 && (
-            <span className="text-xs text-indigo-400 font-medium ml-1">
-              +{Math.floor(((session.overallStreak || 0) - 3) * 2)}
-            </span>
-          )}
-        </div>
       </div>
+
+      {/* Expanded Details */}
+      {isExpanded && (
+        <div className="px-3 pb-3 border-t border-indigo-500/10">
+          <div className="pt-3">
+            <div className="text-sm text-indigo-400/80 mb-2">
+              {new Date(session.timestamp).toLocaleDateString()} at {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+
+            {/* Detailed Stats Grid */}
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div className="text-center bg-indigo-900/20 rounded-lg p-2 border border-indigo-500/20">
+                <div className="text-lg font-bold text-indigo-400">{session.totalMinutes}</div>
+                <div className="text-xs text-indigo-300/80">Total Minutes</div>
+              </div>
+
+              {!isStopwatch ? (
+                <>
+                  <div className="text-center bg-purple-900/20 rounded-lg p-2 border border-purple-500/20">
+                    <div className="text-lg font-bold text-purple-400">{session.sessionCount}</div>
+                    <div className="text-xs text-purple-300/80">Sessions</div>
+                  </div>
+                  {session.cycleCount > 0 && (
+                    <>
+                      <div className="text-center bg-green-900/20 rounded-lg p-2 border border-green-500/20">
+                        <div className="text-lg font-bold text-green-400">{session.cycleCount}</div>
+                        <div className="text-xs text-green-300/80">Cycles</div>
+                      </div>
+                      <div className="text-center bg-orange-900/20 rounded-lg p-2 border border-orange-500/20">
+                        <div className="text-lg font-bold text-orange-400 flex items-center justify-center gap-1">
+                          <Flame className="w-4 h-4" />
+                          {session.overallStreak}
+                        </div>
+                        <div className="text-xs text-orange-300/80">Streak</div>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <div className="text-center bg-cyan-900/20 rounded-lg p-2 border border-cyan-500/20">
+                  <div className="text-lg font-bold text-cyan-400 flex items-center justify-center gap-1">
+                    <Clock className="w-4 h-4" />
+                    ∞
+                  </div>
+                  <div className="text-xs text-cyan-300/80">Stopwatch</div>
+                </div>
+              )}
+            </div>
+
+            {/* Task Breakdown */}
+            {session.taskBreakdown && Object.keys(session.taskBreakdown).length > 0 && (
+              <div className="pt-2 border-t border-indigo-500/20">
+                <div className="flex items-center gap-2 mb-2">
+                  <Target className="w-3 h-3 text-indigo-400" />
+                  <span className="text-xs font-medium text-indigo-300">Task Breakdown:</span>
+                </div>
+                <div className="space-y-1">
+                  {Object.entries(session.taskBreakdown).map(([taskName, minutes]) => {
+                    if (minutes === 0) return null;
+                    return (
+                      <div key={taskName} className="flex items-center justify-between text-xs bg-indigo-900/10 rounded p-2">
+                        <span className="text-white/70 flex-1">
+                          {taskName.length > 25 ? `${taskName.substring(0, 25)}...` : taskName}
+                        </span>
+                        <span className="font-medium text-indigo-400 ml-2">
+                          {Math.round(minutes)}m
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 });
 
-const TaskHistoryItem = memo(({ task, onDelete }) => {
+const TaskHistoryItem = memo(({ task, onDelete, isExpanded, onToggle }) => {
   return (
-    <div className="flex justify-between items-center p-3 bg-gray-800 rounded-lg shadow-sm">
-      <div className="flex-1">
-        <div className="font-medium text-white">{task.task}</div>
-        <div className="flex gap-4 mt-1 text-sm">
-          <div className="flex items-center gap-1 text-indigo-400 font-medium">
-            <Target className="w-3 h-3" />
-            {task.duration} min
+    <div className="group relative bg-gradient-to-r from-emerald-500/8 to-teal-500/8 backdrop-blur-sm border border-emerald-500/15 rounded-lg overflow-hidden hover:from-emerald-500/12 hover:to-teal-500/12 transition-all duration-300">
+      {/* Compact Header - Always Visible */}
+      <div
+        className="flex items-center justify-between p-3 cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3 flex-1">
+          <div className="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+            <Check className="w-3 h-3 text-emerald-400" />
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-white text-sm">
+              {task.task.length > 25 ? `${task.task.substring(0, 25)}...` : task.task}
+            </div>
+            <div className="text-xs text-gray-400">
+              {new Date(task.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {task.duration}m
+            </div>
           </div>
         </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <div className="text-right">
-          <div className="text-sm text-gray-400">
-            {new Date(task.timestamp).toLocaleDateString()}
+
+        <div className="flex items-center gap-2">
+          <div className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
+            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
           </div>
-          <div className="text-xs text-gray-500">
-            {new Date(task.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(task.id);
+            }}
+            className="w-6 h-6 text-white/30 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded Details */}
+      {isExpanded && (
+        <div className="px-3 pb-3 border-t border-emerald-500/10">
+          <div className="pt-3">
+            <div className="text-sm text-emerald-400/80 mb-3">
+              Completed on {new Date(task.timestamp).toLocaleDateString()} at {new Date(task.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+
+            {/* Detailed Stats */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="text-center bg-emerald-900/20 rounded-lg p-3 border border-emerald-500/20">
+                <div className="text-lg font-bold text-emerald-400">{task.duration}</div>
+                <div className="text-xs text-emerald-300/80">Duration (min)</div>
+              </div>
+              <div className="text-center bg-teal-900/20 rounded-lg p-3 border border-teal-500/20">
+                <div className="text-lg font-bold text-teal-400">
+                  {new Date(task.timestamp).toLocaleDateString('en-US', { weekday: 'short' })}
+                </div>
+                <div className="text-xs text-teal-300/80">Day</div>
+              </div>
+            </div>
           </div>
         </div>
-        <button
-          onClick={() => onDelete(task.id)}
-          className="w-6 h-6 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded-full flex items-center justify-center transition-all duration-200"
-        >
-          <X className="w-3 h-3" />
-        </button>
-      </div>
+      )}
     </div>
   );
 });
@@ -346,6 +568,10 @@ const useSound = () => {
 const PomodoroApp = () => {
   // Test mode - accelerates time 
   const [testMode, setTestMode] = useState(false);
+  const [devClickCount, setDevClickCount] = useState(0);
+
+  const [expandedSessions, setExpandedSessions] = useState(new Set());
+  const [expandedTasks, setExpandedTasks] = useState(new Set());
 
   // Timer states
   const [mode, setMode] = useState('25/5');
@@ -677,16 +903,22 @@ const PomodoroApp = () => {
     const totalSessionMinutes = Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0);
 
     // Save to permanent history
-    // Save to permanent history
     if (mode === 'stopwatch') {
       if (totalSessionMinutes >= 1) {
-        const activeTasks = tasks.length > 0 ? tasks.map(t => t.text).join(', ') : 'No Title';
+        // Get the last active task name (the one currently active or last one used)
+        const lastTaskName = activeTaskId ?
+          (tasks.find(t => t.id === activeTaskId)?.text || 'Focus Session') :
+          (tasks.length > 0 ? tasks[tasks.length - 1].text : 'Focus Session');
 
         // Create task breakdown with names instead of IDs
         const taskBreakdownWithNames = {};
         Object.entries(taskSessionTimes).forEach(([taskId, time]) => {
-          const task = tasks.find(t => t.id === parseInt(taskId));
-          const taskName = task ? task.text : `Task ${taskId}`;
+          // Use stored task name first (this handles completed tasks)
+          const storedName = taskSessionNames[taskId];
+          // Fallback to finding current task
+          const currentTask = tasks.find(t => t.id === parseInt(taskId));
+          const taskName = storedName || currentTask?.text || `Task ${taskId}`;
+
           if (time > 0) {
             taskBreakdownWithNames[taskName] = time;
           }
@@ -694,7 +926,7 @@ const PomodoroApp = () => {
 
         const newSession = {
           id: Date.now() + Math.random(),
-          task: activeTasks,
+          task: lastTaskName,
           totalMinutes: Math.round(totalSessionMinutes),
           sessionCount: 0,
           cycleCount: 0,
@@ -711,13 +943,20 @@ const PomodoroApp = () => {
       const totalMinutesIncludingTemp = totalSessionMinutes;
 
       if (tempSessionCount > 0 || tempCycleCount > 0 || totalSessionMinutes > 0) {
-        const activeTasks = tasks.length > 0 ? tasks.map(t => t.text).join(', ') : 'No Title';
+        // Get the last active task name (the one currently active or last one used)
+        const lastTaskName = activeTaskId ?
+          (tasks.find(t => t.id === activeTaskId)?.text || 'Focus Session') :
+          (tasks.length > 0 ? tasks[tasks.length - 1].text : 'Focus Session');
 
         // Create task breakdown with names instead of IDs
         const taskBreakdownWithNames = {};
         Object.entries(taskSessionTimes).forEach(([taskId, time]) => {
-          const task = tasks.find(t => t.id === parseInt(taskId));
-          const taskName = task ? task.text : `Task ${taskId}`;
+          // Use stored task name first (this handles completed tasks)
+          const storedName = taskSessionNames[taskId];
+          // Fallback to finding current task
+          const currentTask = tasks.find(t => t.id === parseInt(taskId));
+          const taskName = storedName || currentTask?.text || `Task ${taskId}`;
+
           if (time > 0) {
             taskBreakdownWithNames[taskName] = time;
           }
@@ -725,7 +964,7 @@ const PomodoroApp = () => {
 
         const newSession = {
           id: Date.now() + Math.random(),
-          task: activeTasks,
+          task: lastTaskName,
           totalMinutes: Math.round(totalMinutesIncludingTemp),
           sessionCount: tempSessionCount,
           cycleCount: tempCycleCount,
@@ -739,16 +978,38 @@ const PomodoroApp = () => {
       }
     }
 
-    // Clean up only unused default tasks (those with no time)
-    setTasks(prev => prev.filter(task => {
+    // Reset default task accumulated time after saving to history
+    setTasks(prev => prev.map(task => {
       if (task.isDefault) {
-        const sessionTime = taskSessionTimes[task.id] || 0;
-        const totalTime = (task.accumulatedTime || 0) + sessionTime;
-        // Only keep default tasks that have accumulated time
-        return totalTime > 0;
+        // Reset accumulated time for default tasks, but keep the task
+        return {
+          ...task,
+          accumulatedTime: 0
+        };
       }
-      return true; // Keep all non-default tasks
+      return task;
     }));
+
+    // Ensure default task always exists and stays at the bottom
+    setTasks(prev => {
+      const nonDefaultTasks = prev.filter(task => !task.isDefault);
+      const defaultTask = prev.find(task => task.isDefault);
+
+      // If default task exists, keep it at the bottom with reset time
+      if (defaultTask) {
+        return [...nonDefaultTasks, { ...defaultTask, accumulatedTime: 0 }];
+      } else {
+        // If no default task exists, create one
+        const newDefaultTask = {
+          id: Date.now() + Math.random(),
+          text: 'Focus Session',
+          completed: false,
+          accumulatedTime: 0,
+          isDefault: true
+        };
+        return [...nonDefaultTasks, newDefaultTask];
+      }
+    });
 
     // Reset all states
     setTempSessionCount(0);
@@ -777,12 +1038,22 @@ const PomodoroApp = () => {
       };
 
       setTasks(prev => {
-        // If there's only a default task, add the new task and move default to back
-        if (prev.length === 1 && prev[0].isDefault) {
-          return [newTask, prev[0]]; // New task first, default at back
+        const nonDefaultTasks = prev.filter(task => !task.isDefault);
+        const defaultTask = prev.find(task => task.isDefault);
+
+        // Always keep default task at the bottom
+        if (defaultTask) {
+          return [newTask, ...nonDefaultTasks, defaultTask];
         } else {
-          // Normal case: just add the new task
-          return [...prev, newTask];
+          // If somehow no default task exists, create one
+          const newDefaultTask = {
+            id: Date.now() + Math.random() + 1,
+            text: 'Focus Session',
+            completed: false,
+            accumulatedTime: 0,
+            isDefault: true
+          };
+          return [newTask, ...nonDefaultTasks, newDefaultTask];
         }
       });
 
@@ -1053,151 +1324,7 @@ const PomodoroApp = () => {
     }
   }, []);
 
-  // Instructions Modal Component
-  const InstructionsModal = memo(() => (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl border border-gray-700 flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <HelpCircle className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-xl font-bold text-white">How to Use & Share Data</h2>
-          </div>
-          <button
-            onClick={() => setShowInstructions(false)}
-            className="w-8 h-8 text-gray-400 hover:text-white hover:bg-gray-700 rounded-full flex items-center justify-center transition-all duration-200"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        <div className="flex-1 overflow-y-auto p-4 min-h-0">
-          <div className="space-y-6 text-gray-300">
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                <Target className="w-5 h-5 text-indigo-400" />
-                Basic Usage
-              </h3>
-              <ul className="space-y-2 text-sm">
-                <li>• Choose between 25min (Pomodoro) or 50min focus sessions</li>
-                <li>• Add tasks to work on during your sessions</li>
-                <li>• <strong>Sessions:</strong> 25/50 min work periods</li>
-                <li>• <strong>Cycles:</strong> Complete work + break periods</li>
-                <li>• Data is only saved when you stop the timer</li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                <Flame className="w-5 h-5 text-orange-400" />
-                Session & Cycle System
-              </h3>
-              <ul className="space-y-2 text-sm">
-                <li>• <strong>Session:</strong> 25min = 0.5 streak, 50min = 1.0 streak</li>
-                <li>• <strong>Cycle:</strong> Work session + break (25+5 or 50+10 minutes)</li>
-                <li>• History shows sessions completed, cycles completed, and overall streak</li>
-                <li>• Stopping the timer resets current streak to 0</li>
-                <li>• Only saves to history when you press Stop</li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                <Download className="w-5 h-5 text-green-400" />
-                Exporting Your Data
-              </h3>
-              <div className="space-y-3 text-sm">
-                <p>To share your data with friends or backup your progress:</p>
-                <ol className="space-y-2 pl-4">
-                  <li>1. Go to the <strong>Analytics</strong> tab</li>
-                  <li>2. Scroll down to "Data Management" section</li>
-                  <li>3. Click <strong>"Export Data"</strong> button</li>
-                  <li>4. A JSON file will be downloaded to your computer</li>
-                  <li>5. Share this file with friends or keep it as a backup</li>
-                </ol>
-                <div className="bg-indigo-900/30 p-3 rounded-lg border border-indigo-500/30">
-                  <p className="text-indigo-300 text-xs">
-                    💡 <strong>Tip:</strong> The exported file contains all your sessions, tasks, streak data, and settings.
-                    It's perfect for backing up your progress or sharing achievements!
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                <Upload className="w-5 h-5 text-blue-400" />
-                Importing Data
-              </h3>
-              <div className="space-y-3 text-sm">
-                <p>To load data from a friend or restore a backup:</p>
-                <ol className="space-y-2 pl-4">
-                  <li>1. Go to the <strong>Analytics</strong> tab</li>
-                  <li>2. Scroll down to "Data Management" section</li>
-                  <li>3. Click <strong>"Import Data"</strong> button</li>
-                  <li>4. Select the JSON file you want to import</li>
-                  <li>5. Confirm the import (this will replace your current data)</li>
-                </ol>
-                <div className="bg-red-900/30 p-3 rounded-lg border border-red-500/30">
-                  <p className="text-red-300 text-xs">
-                    ⚠️ <strong>Warning:</strong> Importing will completely replace your current data.
-                    Make sure to export your current data first if you want to keep it!
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                <FileText className="w-5 h-5 text-purple-400" />
-                File Format
-              </h3>
-              <div className="space-y-2 text-sm">
-                <p>The exported file is in JSON format and contains:</p>
-                <ul className="space-y-1 pl-4">
-                  <li>• All your focus sessions with session/cycle counts</li>
-                  <li>• Completed tasks history</li>
-                  <li>• Current and longest streak records</li>
-                  <li>• Daily goal settings</li>
-                  <li>• Active tasks list</li>
-                </ul>
-                <div className="bg-gray-700/50 p-3 rounded-lg border border-gray-600">
-                  <p className="text-gray-300 text-xs">
-                    📁 File name format: <code>pomodoro-data-YYYY-MM-DD.json</code>
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                <Flame className="w-5 h-5 text-yellow-400" />
-                Sharing with Friends
-              </h3>
-              <div className="space-y-2 text-sm">
-                <p>Great ways to use the export/import feature:</p>
-                <ul className="space-y-1 pl-4">
-                  <li>• Share your productivity achievements</li>
-                  <li>• Compare focus session streaks with friends</li>
-                  <li>• Backup your data before trying new strategies</li>
-                  <li>• Transfer data between devices</li>
-                  <li>• Create challenges by sharing goal targets</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 border-t border-gray-700 flex-shrink-0">
-          <button
-            onClick={() => setShowInstructions(false)}
-            className="w-full py-3 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 transition-all duration-200 font-semibold"
-          >
-            Got it! Let's focus 🎯
-          </button>
-        </div>
-      </div>
-    </div>
-  ));
 
   if (!isLoaded) {
     return (
@@ -1209,7 +1336,10 @@ const PomodoroApp = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-4">
-      {showInstructions && <InstructionsModal />}
+      <InstructionsModalPortal
+        isOpen={showInstructions}
+        onClose={() => setShowInstructions(false)}
+      />
 
       {/* Digital Clock */}
       <div className="absolute top-6 left-6 z-10">
@@ -1271,17 +1401,16 @@ const PomodoroApp = () => {
           <div>
             <div className="mb-8">
               <div className="bg-gradient-to-br from-[#1a2331] to-[#0e111a] rounded-2xl border border-[#1a2331] shadow-[inset_0_1px_3px_rgba(255,255,255,0.05),0_35px_60px_-15px_rgba(0,0,0,0.5)] p-8 mb-6 relative">
-                {/* Active Tasks Display */}
-                <div className="absolute top-4 left-4 z-10 w-52">
+
+                {/* Active Tasks Display - Subtle but Complete */}
+                <div className="absolute top-4 left-4 z-10 w-48">
                   {activeTaskId && tasks.length > 0 && (
-                    <div className="backdrop-blur-sm bg-white/5 rounded-lg p-3 border border-white/10 shadow-lg" style={{
-                      boxShadow: '0 0 15px rgba(59, 130, 246, 0.25), 0 0 30px rgba(59, 130, 246, 0.08), inset 0 1px 2px rgba(255,255,255,0.05)'
-                    }}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Target className="w-3 h-3 text-blue-400" />
-                        <span className="text-xs font-medium text-white/90">Active Task</span>
+                    <div className="bg-black/30 backdrop-blur-sm rounded-lg p-2 border border-white/10">
+                      <div className="flex items-center gap-1 mb-1">
+                        <Target className="w-3 h-3 text-blue-400/60" />
+                        <span className="text-xs font-medium text-white/70">Active Task</span>
                       </div>
-                      <div className="space-y-1.5">
+                      <div className="space-y-1">
                         {(() => {
                           const activeTask = tasks.find(t => t.id === activeTaskId);
                           if (!activeTask) return null;
@@ -1293,27 +1422,26 @@ const PomodoroApp = () => {
                           return (
                             <div className="flex items-center gap-2 text-xs">
                               <div
-                                className="w-1 h-1 bg-blue-400 rounded-full flex-shrink-0"
-                                style={{
-                                  animation: `tickleDot 1.5s ease-in-out infinite`
-                                }}
+                                className="w-1 h-1 bg-blue-400/60 rounded-full flex-shrink-0 animate-pulse"
                               ></div>
-                              <div className="flex-1">
-                                <div className="text-white/80 font-medium">{activeTask.text}</div>
-                                <div className="flex items-center gap-2 mt-1">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-white/80 font-medium">
+                                  {activeTask.text.length > 20 ? `${activeTask.text.substring(0, 20)}...` : activeTask.text}
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5 text-xs">
                                   {accumulatedTime > 0 && (
-                                    <span className="text-blue-400/60 text-xs">
-                                      Previous: {Math.round(accumulatedTime)}m
+                                    <span className="text-blue-400/50">
+                                      Prev: {Math.round(accumulatedTime)}m
                                     </span>
                                   )}
                                   {sessionTime > 0 && (
-                                    <span className="text-green-400/60 text-xs">
-                                      Session: +{Math.round(sessionTime)}m
+                                    <span className="text-green-400/60">
+                                      +{Math.round(sessionTime)}m
                                     </span>
                                   )}
                                   {totalTime > 0 && (
-                                    <span className="text-purple-400/60 text-xs">
-                                      Total: {Math.round(totalTime)}m
+                                    <span className="text-purple-400/50">
+                                      Tot: {Math.round(totalTime)}m
                                     </span>
                                   )}
                                 </div>
@@ -1326,68 +1454,60 @@ const PomodoroApp = () => {
                   )}
                 </div>
 
-                {/* Current Session Stats */}
-                <div className="absolute top-4 right-4 z-10 w-48">
-                  <div className="backdrop-blur-sm bg-white/5 rounded-lg p-3 border border-white/10 shadow-lg" style={{
-                    boxShadow: '0 0 15px rgba(251, 146, 60, 0.25), 0 0 30px rgba(251, 146, 60, 0.08), inset 0 1px 2px rgba(255,255,255,0.05)'
-                  }}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <Flame className="w-3 h-3 text-orange-400" />
-                      <span className="text-xs font-medium text-white/90">Current Work Session</span>
+                {/* Current Session Stats - Subtle but Complete */}
+                <div className="absolute top-4 right-4 z-10 w-44">
+                  <div className="bg-black/30 backdrop-blur-sm rounded-lg p-2 border border-white/10">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Flame className="w-3 h-3 text-orange-400/60" />
+                      <span className="text-xs font-medium text-white/70">Session</span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className="grid grid-cols-2 gap-1 mb-1">
                       <div className="text-center">
-                        <div className="text-sm font-bold text-blue-400">{tempSessionCount}</div>
-                        <div className="text-xs text-white/60">Sessions</div>
+                        <div className="text-xs font-bold text-blue-400/80">{tempSessionCount}</div>
+                        <div className="text-xs text-white/50">Sessions</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-sm font-bold text-green-400">{tempCycleCount}</div>
-                        <div className="text-xs text-white/60">Cycles</div>
+                        <div className="text-xs font-bold text-green-400/80">{tempCycleCount}</div>
+                        <div className="text-xs text-white/50">Cycles</div>
                       </div>
                     </div>
 
-                    <div className="flex justify-between mb-2">
+                    <div className="grid grid-cols-2 gap-1 mb-1">
                       <div className="text-center">
-                        <div className="text-sm font-bold text-orange-400">{tempOverallStreak}</div>
-                        <div className="text-xs text-white/60">Streak</div>
+                        <div className="text-xs font-bold text-orange-400/80">{tempOverallStreak}</div>
+                        <div className="text-xs text-white/50">Streak</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-sm font-bold text-purple-400">
+                        <div className="text-xs font-bold text-purple-400/80">
                           {Math.round(Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0))}m
                         </div>
-                        <div className="text-xs text-white/60">Total</div>
+                        <div className="text-xs text-white/50">Total</div>
                       </div>
                     </div>
 
                     {/* Task breakdown display */}
                     {Object.keys(taskSessionTimes).length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-white/10">
-                        <div className="text-xs text-white/70 mb-1">Task Time:</div>
-                        <div className="space-y-1 max-h-16 overflow-y-auto">
+                      <div className="mt-1 pt-1 border-t border-white/10">
+                        <div className="text-xs text-white/60 mb-1">Tasks:</div>
+                        <div className="space-y-0.5">
                           {Object.entries(taskSessionTimes).map(([taskId, minutes]) => {
                             if (minutes === 0) return null;
 
-                            // Use stored task name first (this is the key fix)
                             const storedName = taskSessionNames[taskId];
-
-                            // Fallback to finding current task
                             const currentTask = tasks.find(t => t.id === parseInt(taskId));
-
-                            // For completed tasks, we need to find by text since they get new IDs
-                            // But we should rely on storedName primarily
                             const taskName = storedName || currentTask?.text || `Task ID: ${taskId}`;
 
                             const isActive = parseInt(taskId) === activeTaskId;
-                            const isCompleted = !currentTask && storedName; // If we have stored name but no current task, it's completed
+                            const isCompleted = !currentTask && storedName;
 
                             return (
                               <div key={taskId} className="flex items-center justify-between text-xs">
-                                <span className={`truncate flex-1 ${isActive ? 'text-blue-300' : isCompleted ? 'text-green-300' : 'text-white/60'}`}>
+                                <span className={`truncate flex-1 ${isActive ? 'text-blue-300/80' : isCompleted ? 'text-green-300/80' : 'text-white/50'}`}>
                                   {isActive && '→ '}{taskName}
                                   {isCompleted && ' ✓'}
                                 </span>
-                                <span className={`font-medium ml-1 ${isActive ? 'text-blue-400' : isCompleted ? 'text-green-400' : 'text-white/70'}`}>
+                                <span className={`font-medium ml-1 ${isActive ? 'text-blue-400/80' : isCompleted ? 'text-green-400/80' : 'text-white/60'}`}>
                                   {Math.round(minutes)}m
                                 </span>
                               </div>
@@ -1397,23 +1517,22 @@ const PomodoroApp = () => {
                       </div>
                     )}
 
-                    <div className="flex items-center justify-center gap-1 mt-2">
+                    <div className="flex items-center justify-center gap-1 mt-1">
                       {[...Array(Math.min(Math.floor(currentSessionStreak * 2), 4))].map((_, i) => (
                         <div
                           key={i}
-                          className="w-1 h-1 bg-orange-400 rounded-full"
+                          className="w-1 h-1 bg-orange-400/60 rounded-full animate-pulse"
                           style={{
-                            animationDelay: `${i * 150}ms`,
-                            animation: `tickleDot 2s ease-in-out infinite`
+                            animationDelay: `${i * 150}ms`
                           }}
                         ></div>
                       ))}
                       {currentSessionStreak > 2 && (
-                        <span className="text-xs text-orange-400 font-medium ml-1">+{Math.floor((currentSessionStreak - 2) * 2)}</span>
+                        <span className="text-xs text-orange-400/60 font-medium ml-1">+{Math.floor((currentSessionStreak - 2) * 2)}</span>
                       )}
                     </div>
-                    <div className="text-xs text-white/50 text-center mt-1">
-                      Stop timer = Save & Reset
+                    <div className="text-xs text-white/40 text-center mt-1">
+                      Stop = Save
                     </div>
                   </div>
                 </div>
@@ -1540,24 +1659,30 @@ const PomodoroApp = () => {
                     </div>
                   </div>
                 </div>
-                <div className="mt-4 p-4 bg-yellow-900/30 rounded-lg border border-yellow-500/30">
-                  <label className="flex items-center gap-2 text-yellow-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={testMode}
-                      onChange={(e) => setTestMode(e.target.checked)}
-                      className="rounded cursor-pointer"
-                    />
-                    <span className="font-medium">🚀 Test Mode (200x faster)</span>
-                  </label>
-                  <p className="text-xs text-yellow-300/70 mt-1 ml-6">
-                    Accelerates both timer AND task time tracking for testing. Perfect for testing task switching, time accumulation, and save functionality!
-                  </p>
+                {/* Hidden developer mode - activated by clicking the timer display 5 times */}
+                <div className="mt-2 text-center">
+                  <div
+                    className="inline-block cursor-pointer select-none"
+                    onClick={() => {
+                      setDevClickCount(prev => {
+                        const newCount = prev + 1;
+                        if (newCount >= 5) {
+                          setTestMode(!testMode);
+                          return 0;
+                        }
+                        return newCount;
+                      });
+                    }}
+                  >
+                    <span className="text-gray-500 text-xs hover:text-gray-400 transition-colors">
+                      v1.0
+                    </span>
+                  </div>
                   {testMode && (
-                    <div className="mt-2 p-2 bg-yellow-800/30 rounded border border-yellow-500/50">
-                      <div className="text-xs text-yellow-200 font-medium">
-                        ⚡ Test mode active: 1 real second = ~3.3 minutes of task time
-                      </div>
+                    <div className="mt-2 px-3 py-1 bg-orange-900/30 rounded-full border border-orange-500/30">
+                      <span className="text-xs text-orange-300 font-medium">
+                        ⚡ Developer Mode Active
+                      </span>
                     </div>
                   )}
                 </div>
@@ -1669,52 +1794,6 @@ const PomodoroApp = () => {
                     </div>
                   </div>
                 </div>
-
-                {/* Debug info */}
-                <div className="mt-4 p-3 bg-green-900/30 rounded-lg border border-green-500/30">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Target className="w-4 h-4 text-green-400" />
-                    <span className="text-sm font-medium text-green-300">NOUVEAU SYSTÈME - Temps par tâche indépendant</span>
-                    {testMode && <span className="text-xs bg-yellow-500 text-yellow-900 px-2 py-0.5 rounded-full font-bold">TEST MODE 200x</span>}
-                  </div>
-                  <ul className="text-xs text-green-300/80 space-y-1">
-                    <li>• ✅ Chaque tâche a son propre temps indépendant</li>
-                    <li>• ✅ Le changement de tâche active fige le temps de la précédente</li>
-                    <li>• ✅ Temps affiché en temps réel dans "Active Tasks"</li>
-                    <li>• ✅ Sauvegarde globale + breakdown par tâche au stop</li>
-                    <li>• ✅ Test mode accélère aussi le temps des tâches (200x)</li>
-                  </ul>
-                  <div className="mt-2 p-2 bg-gray-800/50 rounded border border-gray-600/30 space-y-1">
-                    <div className="text-xs text-gray-300">
-                      Active Task ID: {activeTaskId || 'None'}
-                    </div>
-                    <div className="text-xs text-gray-300">
-                      Task Session Times: {JSON.stringify(taskSessionTimes, null, 2)}
-                    </div>
-                    <div className="text-xs text-gray-300">
-                      Total Session Time: {Math.round(Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0))}m
-                    </div>
-                    {testMode && (
-                      <div className="text-xs text-yellow-300 font-medium">
-                        🚀 Test Mode: Time accelerated 200x for quick testing!
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Add this temporary debug section after your existing debug info */}
-              <div className="mt-2 p-2 bg-blue-800/50 rounded border border-blue-600/30 space-y-1">
-                <div className="text-xs text-blue-300 font-medium">Debug: Task Session Names</div>
-                <div className="text-xs text-blue-200">
-                  Task Session Names: {JSON.stringify(taskSessionNames, null, 2)}
-                </div>
-                <div className="text-xs text-blue-200">
-                  Current Active Task ID: {activeTaskId}
-                </div>
-                <div className="text-xs text-blue-200">
-                  Active Task Name: {tasks.find(t => t.id === activeTaskId)?.text || 'None'}
-                </div>
               </div>
               {/* Task Management Section */}
               <div className="mt-8">
@@ -1728,7 +1807,7 @@ const PomodoroApp = () => {
                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border border-blue-500/30 flex items-center justify-center backdrop-blur-sm">
                           <Check className="w-5 h-5 text-blue-400" />
                         </div>
-                        <h3 className="text-xl font-semibold text-white/90 tracking-tight">Active Tasks</h3>
+                        <h3 className="text-xl font-semibold text-white/90 tracking-tight">Ongoing tasks</h3>
                         <div className="ml-auto px-3 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full shadow-[0_0_12px_rgba(59,130,246,0.3)]">
                           <span className="text-sm font-medium text-blue-400">{tasks.length}</span>
                         </div>
@@ -1748,6 +1827,12 @@ const PomodoroApp = () => {
                               task={task}
                               onComplete={completeTask}
                               onDelete={(id) => {
+                                // Prevent deletion of default tasks
+                                const taskToDelete = tasks.find(t => t.id === id);
+                                if (taskToDelete?.isDefault) {
+                                  return; // Don't delete default tasks
+                                }
+
                                 if (id === activeTaskId && isRunning) {
                                   // Find next task before deleting
                                   const currentTaskIndex = tasks.findIndex(t => t.id === id);
@@ -1929,7 +2014,7 @@ const PomodoroApp = () => {
                 <div className="text-2xl font-bold text-indigo-300">
                   {timeHistory.reduce((sum, session) => sum + (session.totalMinutes || 0), 0)}
                 </div>
-                <div className="text-sm text-indigo-400">Total Minutes</div>
+                <div className="text-sm text-blue-400">Total Minutes</div>
               </div>
               <div className="bg-green-900/30 p-4 rounded-lg text-center">
                 <div className="text-2xl font-bold text-green-300">
@@ -2058,7 +2143,7 @@ const PomodoroApp = () => {
                     </button>
                   </div>
 
-                  <div className="bg-gray-700 rounded-lg p-4 max-h-96 overflow-y-auto">
+                  <div className="bg-gray-800 rounded-lg p-4 max-h-[450px] overflow-y-auto space-y-2">
                     {timeHistory.length === 0 ? (
                       <p className="text-gray-400 italic text-center py-8">No work sessions recorded yet</p>
                     ) : (
@@ -2068,6 +2153,16 @@ const PomodoroApp = () => {
                             key={session.id}
                             session={session}
                             onDelete={deleteTimeSession}
+                            isExpanded={expandedSessions.has(session.id)}
+                            onToggle={() => {
+                              const newExpanded = new Set(expandedSessions);
+                              if (newExpanded.has(session.id)) {
+                                newExpanded.delete(session.id);
+                              } else {
+                                newExpanded.add(session.id);
+                              }
+                              setExpandedSessions(newExpanded);
+                            }}
                           />
                         ))}
                       </div>
@@ -2090,7 +2185,7 @@ const PomodoroApp = () => {
                     </button>
                   </div>
 
-                  <div className="bg-gray-700 rounded-lg p-4 max-h-96 overflow-y-auto">
+                  <div className="bg-gray-800 rounded-lg p-4 max-h-96 overflow-y-auto">
                     {taskHistory.length === 0 ? (
                       <p className="text-gray-400 italic text-center py-8">No completed tasks yet</p>
                     ) : (
@@ -2100,6 +2195,16 @@ const PomodoroApp = () => {
                             key={task.id}
                             task={task}
                             onDelete={deleteTask}
+                            isExpanded={expandedTasks.has(task.id)}
+                            onToggle={() => {
+                              const newExpanded = new Set(expandedTasks);
+                              if (newExpanded.has(task.id)) {
+                                newExpanded.delete(task.id);
+                              } else {
+                                newExpanded.add(task.id);
+                              }
+                              setExpandedTasks(newExpanded);
+                            }}
                           />
                         ))}
                       </div>
