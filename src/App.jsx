@@ -718,6 +718,10 @@ const PomodoroApp = () => {
     const [timeHistory, setTimeHistory] = useState([]); // All completed focus sessions
     const [taskHistory, setTaskHistory] = useState([]); // All completed tasks
 
+    // History organization state
+    const [historyViewMode, setHistoryViewMode] = useState('day'); // 'day', 'week', 'month', 'year'
+    const [expandedTimePeriods, setExpandedTimePeriods] = useState(new Set());
+
     // ================================
     // STREAK TRACKING
     // ================================
@@ -1407,6 +1411,77 @@ const PomodoroApp = () => {
         const secs = Math.abs(seconds) % 60;
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }, []);
+    /**
+    * Group history items by time period
+    */
+    const groupHistoryByPeriod = useCallback((historyItems, periodType) => {
+        const groups = {};
+
+        historyItems.forEach(item => {
+            const date = new Date(item.timestamp);
+            let key, label;
+
+            switch (periodType) {
+                case 'day':
+                    key = date.toISOString().split('T')[0];
+                    label = date.toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                    });
+                    break;
+                case 'week':
+                    const weekStart = new Date(date);
+                    weekStart.setDate(date.getDate() - date.getDay());
+                    key = weekStart.toISOString().split('T')[0];
+                    const weekEnd = new Date(weekStart);
+                    weekEnd.setDate(weekStart.getDate() + 6);
+                    label = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                    break;
+                case 'month':
+                    key = date.toISOString().substring(0, 7);
+                    label = date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+                    break;
+                case 'year':
+                    key = date.getFullYear().toString();
+                    label = date.getFullYear().toString();
+                    break;
+                default:
+                    key = date.toISOString().split('T')[0];
+                    label = date.toLocaleDateString();
+            }
+
+            if (!groups[key]) {
+                groups[key] = {
+                    label,
+                    items: [],
+                    date: date
+                };
+            }
+            groups[key].items.push(item);
+        });
+
+        // Sort groups by date (most recent first)
+        return Object.entries(groups)
+            .sort(([, a], [, b]) => new Date(b.date) - new Date(a.date))
+            .map(([key, value]) => ({ key, ...value }));
+    }, []);
+
+    /**
+     * Toggle expanded state for time period
+     */
+    const toggleTimePeriod = useCallback((periodKey) => {
+        setExpandedTimePeriods(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(periodKey)) {
+                newSet.delete(periodKey);
+            } else {
+                newSet.add(periodKey);
+            }
+            return newSet;
+        });
+    }, []);
 
     // ================================
     // ANALYTICS AND CALCULATIONS
@@ -1602,6 +1677,11 @@ const PomodoroApp = () => {
             setTasks([]);
             setCompletedTasks([]);
             setDailyGoal(480);
+            setCurrentSessionStreak(0);
+            setLongestSessionStreak(0);
+            setLastSessionDate(null);
+
+            // Reset streak data
             setCurrentSessionStreak(0);
             setLongestSessionStreak(0);
             setLastSessionDate(null);
@@ -2456,7 +2536,7 @@ const PomodoroApp = () => {
 
                         {/* Data Management Section */}
                         <div className="mt-8 pt-6 border-t border-gray-700">
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between items-center mb-4">
                                 <div>
                                     <h3 className="text-lg font-semibold text-gray-200">Data Management</h3>
                                     <p className="text-sm text-gray-400 mt-1">
@@ -2483,9 +2563,54 @@ const PomodoroApp = () => {
                                         onClick={clearAllData}
                                         className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-200"
                                     >
-                                        Clear Data
+                                        Clear All Data
                                     </button>
                                 </div>
+                            </div>
+
+                            {/* ADD THIS NEW SECTION - Individual Clear Options */}
+                            <div className="mt-4 p-4 bg-gray-700/30 rounded-lg border border-gray-600/30">
+                                <h4 className="text-md font-medium text-gray-200 mb-3">Clear Specific Data</h4>
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => {
+                                            if (window.confirm('Clear all work sessions? This will also reset your streak data.')) {
+                                                setTimeHistory([]);
+                                                setCurrentSessionStreak(0);
+                                                setLongestSessionStreak(0);
+                                                setLastSessionDate(null);
+                                            }
+                                        }}
+                                        className="px-3 py-2 bg-red-500/80 text-white rounded-md hover:bg-red-500 transition-all duration-200 text-sm"
+                                    >
+                                        Clear Work Sessions
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (window.confirm('Clear all completed tasks?')) {
+                                                setTaskHistory([]);
+                                            }
+                                        }}
+                                        className="px-3 py-2 bg-red-500/80 text-white rounded-md hover:bg-red-500 transition-all duration-200 text-sm"
+                                    >
+                                        Clear Completed Tasks
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (window.confirm('Reset streak data only? (keeps your session history)')) {
+                                                setCurrentSessionStreak(0);
+                                                setLongestSessionStreak(0);
+                                                setLastSessionDate(null);
+                                            }
+                                        }}
+                                        className="px-3 py-2 bg-orange-500/80 text-white rounded-md hover:bg-orange-500 transition-all duration-200 text-sm"
+                                    >
+                                        Reset Streaks Only
+                                    </button>
+                                </div>
+                                <p className="text-xs text-gray-400 mt-2">
+                                    Note: Clearing work sessions will reset streak data since streaks are calculated from session history.
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -2514,11 +2639,11 @@ const PomodoroApp = () => {
                             <div className="flex justify-between items-center mb-6">
                                 <div>
                                     <p className="text-gray-300">
-                                        View your completed work sessions with session/cycle counts (Saved when you stop timer)
+                                        View your completed work sessions organized by time period
                                     </p>
                                 </div>
 
-                                {/* Sound Test Buttons */}
+                                {/* Sound Test Buttons Only */}
                                 <div className="space-x-2">
                                     <button
                                         onClick={() => playBreakWarningSound()}
@@ -2542,6 +2667,54 @@ const PomodoroApp = () => {
                             </div>
                         </div>
 
+                        {/* Time Period Selector */}
+                        <div className="flex justify-center mb-8">
+                            <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl p-1 shadow-xl border border-gray-700/50">
+                                <div className="flex gap-1">
+                                    <button
+                                        onClick={() => setHistoryViewMode('day')}
+                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'day'
+                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
+                                    >
+                                        <Calendar className="w-4 h-4" />
+                                        Day
+                                    </button>
+                                    <button
+                                        onClick={() => setHistoryViewMode('week')}
+                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'week'
+                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
+                                    >
+                                        <Calendar className="w-4 h-4" />
+                                        Week
+                                    </button>
+                                    <button
+                                        onClick={() => setHistoryViewMode('month')}
+                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'month'
+                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
+                                    >
+                                        <CalendarDays className="w-4 h-4" />
+                                        Month
+                                    </button>
+                                    <button
+                                        onClick={() => setHistoryViewMode('year')}
+                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'year'
+                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
+                                    >
+                                        <CalendarRange className="w-4 h-4" />
+                                        Year
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                         {/* History Content */}
                         {timeHistory.length === 0 && taskHistory.length === 0 ? (
                             /* Empty State */
@@ -2559,8 +2732,12 @@ const PomodoroApp = () => {
                                         <h3 className="text-xl font-semibold text-white">Work Sessions ({timeHistory.length})</h3>
                                         <button
                                             onClick={() => {
-                                                if (window.confirm('Are you sure you want to delete all work sessions? This action cannot be undone.')) {
+                                                if (window.confirm('Are you sure you want to delete all work sessions? This will also reset your streak data and cannot be undone.')) {
                                                     setTimeHistory([]);
+                                                    // Reset streak data when clearing work sessions
+                                                    setCurrentSessionStreak(0);
+                                                    setLongestSessionStreak(0);
+                                                    setLastSessionDate(null);
                                                 }
                                             }}
                                             className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-200 text-sm"
@@ -2569,27 +2746,60 @@ const PomodoroApp = () => {
                                         </button>
                                     </div>
 
-                                    <div className="bg-gray-800 rounded-lg p-4 max-h-[450px] overflow-y-auto space-y-2">
+                                    <div className="bg-gray-800 rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3">
                                         {timeHistory.length === 0 ? (
                                             <p className="text-gray-400 italic text-center py-8">No work sessions recorded yet</p>
                                         ) : (
-                                            <div className="space-y-2">
-                                                {timeHistory.slice().reverse().map((session) => (
-                                                    <SessionHistoryItem
-                                                        key={session.id}
-                                                        session={session}
-                                                        onDelete={deleteTimeSession}
-                                                        isExpanded={expandedSessions.has(session.id)}
-                                                        onToggle={() => {
-                                                            const newExpanded = new Set(expandedSessions);
-                                                            if (newExpanded.has(session.id)) {
-                                                                newExpanded.delete(session.id);
-                                                            } else {
-                                                                newExpanded.add(session.id);
-                                                            }
-                                                            setExpandedSessions(newExpanded);
-                                                        }}
-                                                    />
+                                            <div className="space-y-3">
+                                                {groupHistoryByPeriod(timeHistory, historyViewMode).map((period) => (
+                                                    <div key={period.key} className="border border-gray-700 rounded-lg overflow-hidden">
+                                                        {/* Period Header */}
+                                                        <button
+                                                            onClick={() => toggleTimePeriod(`sessions-${period.key}`)}
+                                                            className="w-full flex items-center justify-between p-3 bg-gray-700/50 hover:bg-gray-700 transition-all duration-200"
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <div className={`transform transition-transform duration-200 ${expandedTimePeriods.has(`sessions-${period.key}`) ? 'rotate-90' : ''
+                                                                    }`}>
+                                                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                                                    </svg>
+                                                                </div>
+                                                                <span className="font-medium text-white">{period.label}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-4">
+                                                                <span className="text-sm text-gray-400">
+                                                                    {period.items.length} session{period.items.length !== 1 ? 's' : ''}
+                                                                </span>
+                                                                <span className="text-sm text-indigo-400 font-medium">
+                                                                    {Math.round(period.items.reduce((sum, item) => sum + (item.totalMinutes || 0), 0))} min
+                                                                </span>
+                                                            </div>
+                                                        </button>
+
+                                                        {/* Period Content */}
+                                                        {expandedTimePeriods.has(`sessions-${period.key}`) && (
+                                                            <div className="p-3 bg-gray-800/50 space-y-2">
+                                                                {period.items.map((session) => (
+                                                                    <SessionHistoryItem
+                                                                        key={session.id}
+                                                                        session={session}
+                                                                        onDelete={deleteTimeSession}
+                                                                        isExpanded={expandedSessions.has(session.id)}
+                                                                        onToggle={() => {
+                                                                            const newExpanded = new Set(expandedSessions);
+                                                                            if (newExpanded.has(session.id)) {
+                                                                                newExpanded.delete(session.id);
+                                                                            } else {
+                                                                                newExpanded.add(session.id);
+                                                                            }
+                                                                            setExpandedSessions(newExpanded);
+                                                                        }}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 ))}
                                             </div>
                                         )}
@@ -2612,27 +2822,60 @@ const PomodoroApp = () => {
                                         </button>
                                     </div>
 
-                                    <div className="bg-gray-800 rounded-lg p-4 max-h-96 overflow-y-auto">
+                                    <div className="bg-gray-800 rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3">
                                         {taskHistory.length === 0 ? (
                                             <p className="text-gray-400 italic text-center py-8">No completed tasks yet</p>
                                         ) : (
-                                            <div className="space-y-2">
-                                                {taskHistory.slice().reverse().map((task) => (
-                                                    <TaskHistoryItem
-                                                        key={task.id}
-                                                        task={task}
-                                                        onDelete={deleteTask}
-                                                        isExpanded={expandedTasks.has(task.id)}
-                                                        onToggle={() => {
-                                                            const newExpanded = new Set(expandedTasks);
-                                                            if (newExpanded.has(task.id)) {
-                                                                newExpanded.delete(task.id);
-                                                            } else {
-                                                                newExpanded.add(task.id);
-                                                            }
-                                                            setExpandedTasks(newExpanded);
-                                                        }}
-                                                    />
+                                            <div className="space-y-3">
+                                                {groupHistoryByPeriod(taskHistory, historyViewMode).map((period) => (
+                                                    <div key={period.key} className="border border-gray-700 rounded-lg overflow-hidden">
+                                                        {/* Period Header */}
+                                                        <button
+                                                            onClick={() => toggleTimePeriod(`tasks-${period.key}`)}
+                                                            className="w-full flex items-center justify-between p-3 bg-gray-700/50 hover:bg-gray-700 transition-all duration-200"
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <div className={`transform transition-transform duration-200 ${expandedTimePeriods.has(`tasks-${period.key}`) ? 'rotate-90' : ''
+                                                                    }`}>
+                                                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                                                    </svg>
+                                                                </div>
+                                                                <span className="font-medium text-white">{period.label}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-4">
+                                                                <span className="text-sm text-gray-400">
+                                                                    {period.items.length} task{period.items.length !== 1 ? 's' : ''}
+                                                                </span>
+                                                                <span className="text-sm text-emerald-400 font-medium">
+                                                                    {Math.round(period.items.reduce((sum, item) => sum + (item.duration || 0), 0))} min
+                                                                </span>
+                                                            </div>
+                                                        </button>
+
+                                                        {/* Period Content */}
+                                                        {expandedTimePeriods.has(`tasks-${period.key}`) && (
+                                                            <div className="p-3 bg-gray-800/50 space-y-2">
+                                                                {period.items.map((task) => (
+                                                                    <TaskHistoryItem
+                                                                        key={task.id}
+                                                                        task={task}
+                                                                        onDelete={deleteTask}
+                                                                        isExpanded={expandedTasks.has(task.id)}
+                                                                        onToggle={() => {
+                                                                            const newExpanded = new Set(expandedTasks);
+                                                                            if (newExpanded.has(task.id)) {
+                                                                                newExpanded.delete(task.id);
+                                                                            } else {
+                                                                                newExpanded.add(task.id);
+                                                                            }
+                                                                            setExpandedTasks(newExpanded);
+                                                                        }}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 ))}
                                             </div>
                                         )}
@@ -2643,7 +2886,7 @@ const PomodoroApp = () => {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 };
 
