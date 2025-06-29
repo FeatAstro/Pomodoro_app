@@ -661,6 +661,7 @@ const useSound = () => {
 // ================================
 
 const PomodoroApp = () => {
+
     // ================================
     // DEVELOPMENT & UI STATE
     // ================================
@@ -741,7 +742,7 @@ const PomodoroApp = () => {
     const [showInstructions, setShowInstructions] = useState(false); // Modal state
 
     // Data persistence
-    const [dataFilePath, setDataFilePath] = useState(null); // Path to data file
+    const [dataFilePath, setDataFilePath] = useState(undefined); // Path to data file
     const [isLoaded, setIsLoaded] = useState(false); // Loading state
 
     // ================================
@@ -886,148 +887,168 @@ const PomodoroApp = () => {
     }, [isRunning, updateActiveTaskTime]);
 
     // ================================
-    // DATA PERSISTENCE SETUP
+    // SIMPLIFIED TAURI V2 DATA PERSISTENCE
     // ================================
 
     /**
-     * Initialize file path for data storage
-     * Creates app directory if it doesn't exist
+     * Initialize data persistence with direct approach
+     * No complex path joining - just use BaseDirectory directly
      */
     useEffect(() => {
-        const initDataPath = async () => {
+        const initData = async () => {
             try {
-                const appDataDirPath = await appDataDir();
+                console.log('🔄 Initializing direct file system access...');
 
-                // Ensure directory exists
-                try {
-                    await mkdir(appDataDirPath, { recursive: true });
-                } catch (e) {
-                    console.log('Directory might already exist:', e);
-                }
+                // Test if we can access the file system by trying to check if a file exists
+                const { exists } = await import('@tauri-apps/plugin-fs');
+                const { BaseDirectory } = await import('@tauri-apps/plugin-fs');
 
-                // Set file path for data storage
-                const filePath = await join(appDataDirPath, 'pomodoro-data.json');
-                setDataFilePath(filePath);
+                // Simple test to see if file system is working
+                const testFile = 'pomodoro-data.json';
+                await exists(testFile, { baseDir: BaseDirectory.AppData });
+
+                console.log('✅ File system is accessible');
+                setDataFilePath(testFile); // Just the filename
+
             } catch (error) {
-                console.error('Error setting up data path:', error);
+                console.error('❌ File system test failed:', error);
+                setDataFilePath(null);
+                setIsLoaded(true);
             }
         };
-        initDataPath();
-    }, []);
+
+        // Only run once
+        if (!dataFilePath && !isLoaded) {
+            initData();
+        }
+    }, [dataFilePath, isLoaded]);
 
     /**
-     * Load existing data from file on app startup
-     * Restores all user data and settings
+     * Load data using simplified approach
      */
     useEffect(() => {
         const loadData = async () => {
-            if (!dataFilePath) return;
+            if (isLoaded || !dataFilePath) {
+                return;
+            }
 
             try {
-                const fileExists = await exists(dataFilePath);
+                console.log('📖 Attempting to load data...');
+
+                const { exists, readTextFile } = await import('@tauri-apps/plugin-fs');
+                const { BaseDirectory } = await import('@tauri-apps/plugin-fs');
+
+                const fileExists = await exists(dataFilePath, { baseDir: BaseDirectory.AppData });
+
                 if (!fileExists) {
+                    console.log('📝 No existing data file, starting fresh');
                     setIsLoaded(true);
                     return;
                 }
 
-                // Read and parse data file
-                const fileContent = await readTextFile(dataFilePath);
-                const data = JSON.parse(fileContent);
+                console.log('📄 Reading existing data file...');
+                const content = await readTextFile(dataFilePath, { baseDir: BaseDirectory.AppData });
 
-                // Restore all data with safe defaults
+                if (!content || content.trim() === '') {
+                    console.log('📝 Empty file, starting fresh');
+                    setIsLoaded(true);
+                    return;
+                }
+
+                const data = JSON.parse(content);
+                console.log('🎯 Data loaded successfully:', Object.keys(data));
+
+                // Restore data
                 if (data.dailyGoal !== undefined) setDailyGoal(data.dailyGoal);
-                if (data.tasks) setTasks(data.tasks);
-
-                // Restore completed tasks with proper date conversion
-                if (data.completedTasks) {
+                if (data.tasks && Array.isArray(data.tasks)) setTasks(data.tasks);
+                if (data.completedTasks && Array.isArray(data.completedTasks)) {
                     setCompletedTasks(data.completedTasks.map(task => ({
                         ...task,
                         timestamp: new Date(task.timestamp)
                     })));
                 }
-
-                // Restore historical data
-                if (data.timeHistory) setTimeHistory(data.timeHistory);
-                if (data.taskHistory) setTaskHistory(data.taskHistory);
-
-                // Restore streak data
+                if (data.timeHistory && Array.isArray(data.timeHistory)) setTimeHistory(data.timeHistory);
+                if (data.taskHistory && Array.isArray(data.taskHistory)) setTaskHistory(data.taskHistory);
                 if (data.currentSessionStreak !== undefined) setCurrentSessionStreak(data.currentSessionStreak);
                 if (data.longestSessionStreak !== undefined) setLongestSessionStreak(data.longestSessionStreak);
                 if (data.lastSessionDate) setLastSessionDate(data.lastSessionDate);
 
-                setIsLoaded(true);
+                console.log('✅ All data restored successfully');
+
             } catch (error) {
-                console.error('Error loading data:', error);
+                console.error('❌ Error loading data:', error);
+            } finally {
                 setIsLoaded(true);
             }
         };
 
-        // Load data when file path is available
-        if (dataFilePath && !isLoaded) {
-            loadData();
-        }
+        loadData();
     }, [dataFilePath, isLoaded]);
 
     /**
-     * Save all app data to file
-     * Returns success/failure status
+     * Save data with simplified approach
      */
     const saveData = useCallback(async () => {
-        if (!dataFilePath) return false;
-
-        // Prepare complete data structure
-        const data = {
-            dailyGoal,
-            tasks,
-            completedTasks,
-            timeHistory,
-            taskHistory,
-            currentSessionStreak,
-            longestSessionStreak,
-            lastSessionDate,
-            lastSaved: new Date().toISOString(),
-            version: '1.0'
-        };
-
-        try {
-            const jsonString = JSON.stringify(data, null, 2);
-            await writeTextFile(dataFilePath, jsonString);
-            return true;
-        } catch (error) {
-            console.error('Error saving data:', error);
+        if (!isLoaded || !dataFilePath) {
+            console.log('⚠️ Skipping save - not ready');
             return false;
         }
-    }, [dataFilePath, dailyGoal, tasks, completedTasks, timeHistory, taskHistory, currentSessionStreak, longestSessionStreak, lastSessionDate]);
 
-    // ================================
-    // AUTOMATIC DATA MAINTENANCE
-    // ================================
+        try {
+            const { writeTextFile, exists, mkdir } = await import('@tauri-apps/plugin-fs');
+            const { BaseDirectory } = await import('@tauri-apps/plugin-fs');
 
-    /**
-     * Auto-cleanup completed tasks older than 24 hours
-     * Prevents data bloat while keeping recent completions visible
-     */
+            // Create the app directory if it doesn't exist
+            const dirExists = await exists('', { baseDir: BaseDirectory.AppData });
+            if (!dirExists) {
+                console.log('📁 Creating app directory...');
+                await mkdir('', { baseDir: BaseDirectory.AppData, recursive: true });
+            }
+
+            const data = {
+                dailyGoal,
+                tasks,
+                completedTasks,
+                timeHistory,
+                taskHistory,
+                currentSessionStreak,
+                longestSessionStreak,
+                lastSessionDate,
+                lastSaved: new Date().toISOString(),
+                version: '1.0'
+            };
+
+            console.log('💾 Saving data...', {
+                tasks: data.tasks?.length || 0,
+                timeHistory: data.timeHistory?.length || 0,
+                taskHistory: data.taskHistory?.length || 0
+            });
+
+            await writeTextFile(dataFilePath, JSON.stringify(data, null, 2), {
+                baseDir: BaseDirectory.AppData
+            });
+
+            console.log('✅ Data saved successfully');
+            return true;
+
+        } catch (error) {
+            console.error('❌ Error saving data:', error);
+            return false;
+        }
+    }, [isLoaded, dataFilePath, dailyGoal, tasks, completedTasks, timeHistory, taskHistory, currentSessionStreak, longestSessionStreak, lastSessionDate]);
+
+    // Auto-save with debouncing
     useEffect(() => {
-        const cleanupOldTasks = () => {
-            const now = new Date();
-            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        if (isLoaded && dataFilePath) {
+            const timeoutId = setTimeout(() => {
+                console.log('🔄 Auto-saving...');
+                saveData();
+            }, 2000); // Increased to 2 seconds to prevent rapid saves
 
-            setCompletedTasks(prev =>
-                prev.filter(task => new Date(task.timestamp) > oneDayAgo)
-            );
-        };
+            return () => clearTimeout(timeoutId);
+        }
+    }, [isLoaded, dataFilePath, dailyGoal, tasks, completedTasks, timeHistory, taskHistory, currentSessionStreak, longestSessionStreak, lastSessionDate]);
 
-        // Run cleanup on load and then every hour
-        cleanupOldTasks();
-        const cleanupInterval = setInterval(cleanupOldTasks, 60 * 60 * 1000);
-
-        return () => clearInterval(cleanupInterval);
-    }, []);
-
-    // Auto-save data whenever it changes
-    useEffect(() => {
-        if (isLoaded) saveData();
-    }, [isLoaded, saveData]);
 
     // ================================
     // APP INITIALIZATION
@@ -1591,80 +1612,6 @@ const PomodoroApp = () => {
         return data;
     }, [viewMode, timeHistory, taskHistory]);
 
-    // ================================
-    // DATA EXPORT/IMPORT FUNCTIONS
-    // ================================
-
-    /**
-     * Export all user data to JSON file
-     * Creates downloadable backup with timestamp
-     */
-    const exportData = useCallback(() => {
-        const data = {
-            timeHistory,
-            taskHistory,
-            tasks,
-            completedTasks,
-            dailyGoal,
-            currentSessionStreak,
-            longestSessionStreak,
-            lastSessionDate,
-            exportDate: new Date().toISOString()
-        };
-
-        // Create and download file
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `pomodoro-data-${new Date().toISOString().split('T')[0]}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }, [timeHistory, taskHistory, tasks, completedTasks, dailyGoal, currentSessionStreak, longestSessionStreak, lastSessionDate]);
-
-    /**
-     * Import data from JSON file
-     * Replaces all current data with imported data
-     */
-    const importData = useCallback((event) => {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-
-                if (window.confirm('This will replace all your current data. Are you sure?')) {
-                    // Import all data with validation
-                    if (data.timeHistory) setTimeHistory(data.timeHistory);
-                    if (data.taskHistory) setTaskHistory(data.taskHistory);
-                    if (data.tasks) setTasks(data.tasks);
-
-                    // Handle completed tasks with proper date conversion
-                    if (data.completedTasks) {
-                        setCompletedTasks(data.completedTasks.map(task => ({
-                            ...task,
-                            timestamp: new Date(task.timestamp)
-                        })));
-                    }
-
-                    // Import settings and streak data
-                    if (data.dailyGoal) setDailyGoal(data.dailyGoal);
-                    if (data.currentSessionStreak !== undefined) setCurrentSessionStreak(data.currentSessionStreak);
-                    if (data.longestSessionStreak !== undefined) setLongestSessionStreak(data.longestSessionStreak);
-                    if (data.lastSessionDate) setLastSessionDate(data.lastSessionDate);
-
-                    alert('Data imported successfully!');
-                }
-            } catch (error) {
-                alert('Invalid file format. Please select a valid Pomodoro data file.');
-            }
-        };
-        reader.readAsText(file);
-        event.target.value = ''; // Reset file input
-    }, []);
-
     /**
      * Clear all user data
      * Complete reset of the application state
@@ -1699,6 +1646,88 @@ const PomodoroApp = () => {
         }
     }, []);
 
+    /**
+ * Export data to JSON file
+ */
+    const exportData = useCallback(async () => {
+        try {
+            const data = {
+                dailyGoal,
+                tasks,
+                completedTasks,
+                timeHistory,
+                taskHistory,
+                currentSessionStreak,
+                longestSessionStreak,
+                lastSessionDate,
+                exportDate: new Date().toISOString(),
+                version: '1.0'
+            };
+
+            const jsonString = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `pomodoro-data-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            console.log('✅ Data exported successfully');
+        } catch (error) {
+            console.error('❌ Error exporting data:', error);
+            alert('Failed to export data');
+        }
+    }, [dailyGoal, tasks, completedTasks, timeHistory, taskHistory, currentSessionStreak, longestSessionStreak, lastSessionDate]);
+
+    /**
+     * Import data from JSON file
+     */
+    const importData = useCallback(async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+
+            // Validate the data structure
+            if (!data.version || !data.exportDate) {
+                throw new Error('Invalid file format');
+            }
+
+            if (window.confirm('This will replace all your current data. Are you sure you want to continue?')) {
+                // Restore all data
+                if (data.dailyGoal !== undefined) setDailyGoal(data.dailyGoal);
+                if (data.tasks && Array.isArray(data.tasks)) setTasks(data.tasks);
+                if (data.completedTasks && Array.isArray(data.completedTasks)) {
+                    setCompletedTasks(data.completedTasks.map(task => ({
+                        ...task,
+                        timestamp: new Date(task.timestamp)
+                    })));
+                }
+                if (data.timeHistory && Array.isArray(data.timeHistory)) setTimeHistory(data.timeHistory);
+                if (data.taskHistory && Array.isArray(data.taskHistory)) setTaskHistory(data.taskHistory);
+                if (data.currentSessionStreak !== undefined) setCurrentSessionStreak(data.currentSessionStreak);
+                if (data.longestSessionStreak !== undefined) setLongestSessionStreak(data.longestSessionStreak);
+                if (data.lastSessionDate) setLastSessionDate(data.lastSessionDate);
+
+                console.log('✅ Data imported successfully');
+                alert('Data imported successfully!');
+            }
+
+            // Reset the file input
+            event.target.value = '';
+        } catch (error) {
+            console.error('❌ Error importing data:', error);
+            alert('Failed to import data. Please check the file format.');
+            event.target.value = '';
+        }
+    }, []);
+
     // ================================
     // LOADING STATE
     // ================================
@@ -1717,1178 +1746,1219 @@ const PomodoroApp = () => {
     // ================================
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-4">
-            {/* Instructions Modal */}
-            <InstructionsModalPortal
-                isOpen={showInstructions}
-                onClose={() => setShowInstructions(false)}
-            />
-
-            {/* ================================ */}
-            {/* TOP HEADER BAR */}
-            {/* ================================ */}
-
-            {/* Digital Clock - Top Left */}
-            <div className="absolute top-6 left-6 z-10">
+        <div className="min-h-screen" style={{ background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)' }}>
+            {/* Enhanced Acrylic Title Bar with Window Controls */}
+            <div
+                className="fixed top-0 left-0 right-0 z-50 h-8"
+                style={{
+                    background: 'rgba(31, 41, 55, 0.9)',
+                    backdropFilter: 'blur(20px) saturate(180%)',
+                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                    borderBottom: '2px solid rgba(99, 102, 241, 0.3)',
+                    boxShadow: '0 2px 20px rgba(0,0,0,0.5)'
+                }}
+            >
+                {/* Draggable area */}
                 <div
-                    className="text-2xl font-mono font-bold text-white drop-shadow-2xl"
-                    style={{
-                        textShadow: '0 0 20px rgba(99, 102, 241, 0.8), 0 0 40px rgba(99, 102, 241, 0.6), 0 0 60px rgba(99, 102, 241, 0.4)'
-                    }}
-                >
-                    {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    className="absolute inset-0 w-full h-full"
+                    data-tauri-drag-region
+                ></div>
+
+                {/* Content on top of draggable area */}
+                <div className="relative flex items-center justify-between h-full px-4 pointer-events-none">
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={async () => {
+                                const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                                const window = getCurrentWindow();
+                                window.close();
+                            }}
+                            className="w-3 h-3 rounded-full bg-red-500 hover:bg-red-400 shadow-md border border-red-400/50 transition-colors duration-200 pointer-events-auto"
+                        ></button>
+                        <button
+                            onClick={async () => {
+                                const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                                const window = getCurrentWindow();
+                                window.minimize();
+                            }}
+                            className="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-400 shadow-md border border-yellow-400/50 transition-colors duration-200 pointer-events-auto"
+                        ></button>
+                        <button
+                            onClick={async () => {
+                                const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                                const window = getCurrentWindow();
+                                const isMaximized = await window.isMaximized();
+                                if (isMaximized) {
+                                    window.unmaximize();
+                                } else {
+                                    window.maximize();
+                                }
+                            }}
+                            className="w-3 h-3 rounded-full bg-green-500 hover:bg-green-400 shadow-md border border-green-400/50 transition-colors duration-200 pointer-events-auto"
+                        ></button>
+                        <span className="ml-3 text-white text-sm font-semibold drop-shadow-md pointer-events-none">🍅 Pomodoro Timer</span>
+                    </div>
                 </div>
             </div>
 
-            {/* Date Display - Top Right */}
-            <div className="absolute top-6 right-6 z-10">
-                <div className="text-right">
-                    <div
-                        className="text-3xl font-bold text-white mb-1 tracking-tight drop-shadow-2xl"
-                        style={{
-                            textShadow: '0 0 20px rgba(168, 85, 247, 0.8), 0 0 40px rgba(168, 85, 247, 0.6), 0 0 60px rgba(168, 85, 247, 0.4)'
-                        }}
-                    >
-                        {currentTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}
-                    </div>
-                    <div
-                        className="text-base font-light text-gray-300 drop-shadow-lg"
-                        style={{
-                            textShadow: '0 0 15px rgba(156, 163, 175, 0.6), 0 0 30px rgba(156, 163, 175, 0.4)'
-                        }}
-                    >
-                        {currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric' })}
-                    </div>
-                </div>
-            </div>
+            {/* Main Content with solid background */}
+            <div className="pt-8" style={{ background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)', minHeight: '100vh' }}>
+                <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-4">
+                    {/* Instructions Modal */}
+                    <InstructionsModalPortal
+                        isOpen={showInstructions}
+                        onClose={() => setShowInstructions(false)}
+                    />
 
-            {/* ================================ */}
-            {/* MAIN CONTENT CONTAINER */}
-            {/* ================================ */}
+                    {/* ================================ */}
+                    {/* TOP HEADER BAR */}
+                    {/* ================================ */}
 
-            <div className="max-w-6xl mx-auto pt-4">
-
-                {/* ================================ */}
-                {/* NAVIGATION TABS */}
-                {/* ================================ */}
-
-                <div className="flex justify-center mb-8">
-                    <div className="bg-gray-800/40 backdrop-blur-md rounded-full p-1 border border-[#1a2331] shadow-[0_30px_60px_-10px_rgba(0,0,0,0.5),inset_0_1px_2px_rgba(255,255,255,0.05)] transform hover:scale-105 hover:translate-y-[-2px] transition-all duration-500 ease-out">
-                        <div className="flex">
-                            {/* Timer Tab */}
-                            <button
-                                onClick={() => setActiveTab('timer')}
-                                className={`px-4 py-2 rounded-full font-medium transition-all duration-300 text-sm flex items-center gap-2 ${activeTab === 'timer'
-                                    ? 'bg-indigo-500 text-white shadow-lg scale-105'
-                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                    }`}
-                            >
-                                <Target className="w-4 h-4" />
-                                Timer
-                            </button>
-
-                            {/* Analytics Tab */}
-                            <button
-                                onClick={() => setActiveTab('analytics')}
-                                className={`px-4 py-2 rounded-full font-medium transition-all duration-300 text-sm flex items-center gap-2 ${activeTab === 'analytics'
-                                    ? 'bg-indigo-500 text-white shadow-lg scale-105'
-                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                    }`}
-                            >
-                                <BarChart3 className="w-4 h-4" />
-                                Analytics
-                            </button>
-
-                            {/* History Tab */}
-                            <button
-                                onClick={() => setActiveTab('history')}
-                                className={`px-4 py-2 rounded-full font-medium transition-all duration-300 text-sm flex items-center gap-2 ${activeTab === 'history'
-                                    ? 'bg-indigo-500 text-white shadow-lg scale-105'
-                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                    }`}
-                            >
-                                <History className="w-4 h-4" />
-                                History
-                            </button>
+                    {/* Digital Clock - Top Left */}
+                    <div className="absolute top-6 left-6 z-10">
+                        <div
+                            className="text-2xl font-mono font-bold text-white drop-shadow-2xl"
+                            style={{
+                                textShadow: '0 0 20px rgba(99, 102, 241, 0.8), 0 0 40px rgba(99, 102, 241, 0.6), 0 0 60px rgba(99, 102, 241, 0.4)'
+                            }}
+                        >
+                            {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                     </div>
-                </div>
 
-                {/* ================================ */}
-                {/* TIMER TAB CONTENT */}
-                {/* ================================ */}
+                    {/* Date Display - Top Right */}
+                    <div className="absolute top-6 right-6 z-10">
+                        <div className="text-right">
+                            <div
+                                className="text-3xl font-bold text-white mb-1 tracking-tight drop-shadow-2xl"
+                                style={{
+                                    textShadow: '0 0 20px rgba(168, 85, 247, 0.8), 0 0 40px rgba(168, 85, 247, 0.6), 0 0 60px rgba(168, 85, 247, 0.4)'
+                                }}
+                            >
+                                {currentTime.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}
+                            </div>
+                            <div
+                                className="text-base font-light text-gray-300 drop-shadow-lg"
+                                style={{
+                                    textShadow: '0 0 15px rgba(156, 163, 175, 0.6), 0 0 30px rgba(156, 163, 175, 0.4)'
+                                }}
+                            >
+                                {currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric' })}
+                            </div>
+                        </div>
+                    </div>
 
-                {activeTab === 'timer' && (
-                    <div>
-                        <div className="mb-8">
-                            <div className="bg-gradient-to-br from-[#1a2331] to-[#0e111a] rounded-2xl border border-[#1a2331] shadow-[inset_0_1px_3px_rgba(255,255,255,0.05),0_35px_60px_-15px_rgba(0,0,0,0.5)] p-8 mb-6 relative">
+                    {/* ================================ */}
+                    {/* MAIN CONTENT CONTAINER */}
+                    {/* ================================ */}
 
-                                {/* ================================ */}
-                                {/* ACTIVE TASK DISPLAY - TOP LEFT */}
-                                {/* ================================ */}
+                    <div className="w-full px-4 pt-4">
 
-                                <div className="absolute top-4 left-4 z-10 w-48">
-                                    {activeTaskId && tasks.length > 0 && (
-                                        <div className="bg-black/30 backdrop-blur-sm rounded-lg p-2 border border-white/10">
-                                            <div className="flex items-center gap-1 mb-1">
-                                                <Target className="w-3 h-3 text-blue-400/60" />
-                                                <span className="text-xs font-medium text-white/70">Active Task</span>
-                                            </div>
-                                            <div className="space-y-1">
-                                                {(() => {
-                                                    const activeTask = tasks.find(t => t.id === activeTaskId);
-                                                    if (!activeTask) return null;
+                        {/* ================================ */}
+                        {/* NAVIGATION TABS */}
+                        {/* ================================ */}
 
-                                                    const sessionTime = taskSessionTimes[activeTask.id] || 0;
-                                                    const accumulatedTime = activeTask.accumulatedTime || 0;
-                                                    const totalTime = accumulatedTime + sessionTime;
-
-                                                    return (
-                                                        <div className="flex items-center gap-2 text-xs">
-                                                            <div className="w-1 h-1 bg-blue-400/60 rounded-full flex-shrink-0 animate-pulse"></div>
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="text-white/80 font-medium">
-                                                                    {activeTask.text.length > 20 ? `${activeTask.text.substring(0, 20)}...` : activeTask.text}
-                                                                </div>
-                                                                <div className="flex items-center gap-2 mt-0.5 text-xs">
-                                                                    {accumulatedTime > 0 && (
-                                                                        <span className="text-blue-400/50">
-                                                                            Prev: {Math.round(accumulatedTime)}m
-                                                                        </span>
-                                                                    )}
-                                                                    {sessionTime > 0 && (
-                                                                        <span className="text-green-400/60">
-                                                                            +{Math.round(sessionTime)}m
-                                                                        </span>
-                                                                    )}
-                                                                    {totalTime > 0 && (
-                                                                        <span className="text-purple-400/50">
-                                                                            Tot: {Math.round(totalTime)}m
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })()}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* ================================ */}
-                                {/* SESSION STATS - TOP RIGHT */}
-                                {/* ================================ */}
-
-                                <div className="absolute top-4 right-4 z-10 w-44">
-                                    <div className="bg-black/30 backdrop-blur-sm rounded-lg p-2 border border-white/10">
-                                        <div className="flex items-center gap-1 mb-1">
-                                            <Flame className="w-3 h-3 text-orange-400/60" />
-                                            <span className="text-xs font-medium text-white/70">Session</span>
-                                        </div>
-
-                                        {/* Session/Cycle Stats Grid */}
-                                        <div className="grid grid-cols-2 gap-1 mb-1">
-                                            <div className="text-center">
-                                                <div className="text-xs font-bold text-blue-400/80">{tempSessionCount}</div>
-                                                <div className="text-xs text-white/50">Sessions</div>
-                                            </div>
-                                            <div className="text-center">
-                                                <div className="text-xs font-bold text-green-400/80">{tempCycleCount}</div>
-                                                <div className="text-xs text-white/50">Cycles</div>
-                                            </div>
-                                        </div>
-
-                                        {/* Streak/Time Stats Grid */}
-                                        <div className="grid grid-cols-2 gap-1 mb-1">
-                                            <div className="text-center">
-                                                <div className="text-xs font-bold text-orange-400/80">{tempOverallStreak}</div>
-                                                <div className="text-xs text-white/50">Streak</div>
-                                            </div>
-                                            <div className="text-center">
-                                                <div className="text-xs font-bold text-purple-400/80">
-                                                    {Math.round(Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0))}m
-                                                </div>
-                                                <div className="text-xs text-white/50">Total</div>
-                                            </div>
-                                        </div>
-
-                                        {/* Task Breakdown Display */}
-                                        {Object.keys(taskSessionTimes).length > 0 && (
-                                            <div className="mt-1 pt-1 border-t border-white/10">
-                                                <div className="text-xs text-white/60 mb-1">Tasks:</div>
-                                                <div className="space-y-0.5">
-                                                    {Object.entries(taskSessionTimes).map(([taskId, minutes]) => {
-                                                        if (minutes === 0) return null;
-
-                                                        const storedName = taskSessionNames[taskId];
-                                                        const currentTask = tasks.find(t => t.id === parseInt(taskId));
-                                                        const taskName = storedName || currentTask?.text || `Task ID: ${taskId}`;
-
-                                                        const isActive = parseInt(taskId) === activeTaskId;
-                                                        const isCompleted = !currentTask && storedName;
-
-                                                        return (
-                                                            <div key={taskId} className="flex items-center justify-between text-xs">
-                                                                <span className={`truncate flex-1 ${isActive ? 'text-blue-300/80' :
-                                                                    isCompleted ? 'text-green-300/80' : 'text-white/50'
-                                                                    }`}>
-                                                                    {isActive && '→ '}{taskName}
-                                                                    {isCompleted && ' ✓'}
-                                                                </span>
-                                                                <span className={`font-medium ml-1 ${isActive ? 'text-blue-400/80' :
-                                                                    isCompleted ? 'text-green-400/80' : 'text-white/60'
-                                                                    }`}>
-                                                                    {Math.round(minutes)}m
-                                                                </span>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Streak Indicator Dots */}
-                                        <div className="flex items-center justify-center gap-1 mt-1">
-                                            {[...Array(Math.min(Math.floor(currentSessionStreak * 2), 4))].map((_, i) => (
-                                                <div
-                                                    key={i}
-                                                    className="w-1 h-1 bg-orange-400/60 rounded-full animate-pulse"
-                                                    style={{ animationDelay: `${i * 150}ms` }}
-                                                ></div>
-                                            ))}
-                                            {currentSessionStreak > 2 && (
-                                                <span className="text-xs text-orange-400/60 font-medium ml-1">
-                                                    +{Math.floor((currentSessionStreak - 2) * 2)}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="text-xs text-white/40 text-center mt-1">
-                                            Stop = Save
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* ================================ */}
-                                {/* TIMER MODE SELECTION */}
-                                {/* ================================ */}
-
-                                <div className="flex justify-center mb-8">
-                                    <div className="flex gap-3 bg-gray-700/30 backdrop-blur-md p-3 rounded-full border border-gray-500/20 shadow-[0_15px_40px_rgba(0,0,0,0.35),inset_0_1px_2px_rgba(255,255,255,0.05)] transition-all duration-500">
-                                        {[
-                                            { key: '25/5', label: '25' },
-                                            { key: '50/10', label: '50' },
-                                            { key: 'stopwatch', label: '∞' }
-                                        ].map((m) => (
-                                            <button
-                                                key={m.key}
-                                                onClick={() => {
-                                                    setMode(m.key);
-                                                    setIsRunning(false);
-                                                    setIsBreak(false);
-                                                }}
-                                                className={`w-10 h-10 rounded-full text-1xl font-bold transition-all duration-300 ease-out ${mode === m.key
-                                                    ? 'bg-indigo-500 text-white shadow-[0_10px_25px_rgba(99,102,241,0.5)] scale-110 ring-2 ring-indigo-300'
-                                                    : 'bg-gray-600/60 text-gray-200 hover:bg-gray-500/70 hover:scale-105 hover:shadow-[0_4px_12px_rgba(0,0,0,0.3)]'
-                                                    }`}
-                                            >
-                                                {m.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* ================================ */}
-                                {/* MAIN TIMER DISPLAY */}
-                                {/* ================================ */}
-
-                                <div className="flex justify-center">
-                                    <div className="flex flex-col items-center">
-                                        {/* Timer Circle */}
-                                        <div className="relative mb-8">
-                                            <div className="absolute inset-0 w-80 h-80 rounded-full bg-indigo-500 blur-3xl opacity-25 scale-110"></div>
-                                            <div className="relative w-80 h-80 rounded-full bg-gradient-to-br from-gray-800 to-gray-900 border-4 border-gray-700 shadow-3xl flex items-center justify-center backdrop-blur-sm">
-                                                <div className="absolute inset-6 rounded-full bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20"></div>
-
-                                                {/* Progress Ring */}
-                                                <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 320 320">
-                                                    <circle cx="160" cy="160" r="140" fill="none" stroke="#374151" strokeWidth="10" className="opacity-30" />
-                                                    <circle
-                                                        cx="160" cy="160" r="140" fill="none" stroke="url(#gradient)" strokeWidth="10" strokeLinecap="round"
-                                                        strokeDasharray={`${2 * Math.PI * 140}`}
-                                                        strokeDashoffset={mode === 'stopwatch' ? 0 : 2 * Math.PI * 140 * (1 - (sessionElapsedTime / (mode === '25/5' ? (isBreak ? 5 * 60 : 25 * 60) : (isBreak ? 10 * 60 : 50 * 60))))}
-                                                        className="transition-all duration-1000 ease-out drop-shadow-lg"
-                                                        style={{ filter: 'drop-shadow(0 0 12px #818cf8)' }}
-                                                    />
-                                                    <defs>
-                                                        <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                                            <stop offset="0%" stopColor="#6366f1" />
-                                                            <stop offset="100%" stopColor="#a855f7" />
-                                                        </linearGradient>
-                                                    </defs>
-                                                </svg>
-
-                                                {/* Timer Display */}
-                                                <div className="relative z-10 text-center">
-                                                    <div className="text-7xl font-mono font-bold text-white mb-3 leading-none tracking-tight drop-shadow-2xl">
-                                                        {formatTime(timeLeft)}
-                                                    </div>
-                                                    {isRunning && (
-                                                        <div className={`inline-flex items-center gap-2 px-5 py-2 rounded-full text-lg font-semibold ${isBreak
-                                                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                                            : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                                                            } backdrop-blur-sm`}>
-                                                            <span className="text-xl">{isBreak ? '☕' : '🎯'}</span>
-                                                            {isBreak ? 'Break Time' : 'Focus Time'}
-                                                        </div>
-                                                    )}
-                                                    {/* Test Mode Indicator */}
-                                                    {testMode && (
-                                                        <div className="absolute -top-2 -right-2 px-2 py-1 bg-yellow-500 text-yellow-900 text-xs font-bold rounded-full shadow-lg animate-pulse">
-                                                            ++
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* ================================ */}
-                                        {/* ACTIVE TASK INDICATOR */}
-                                        {/* ================================ */}
-
-                                        {activeTaskId && tasks.length > 0 && (
-                                            <div className="mb-6 text-center">
-                                                <div className="inline-flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 border border-blue-500/30 rounded-2xl backdrop-blur-sm shadow-lg">
-                                                    <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse shadow-lg" style={{
-                                                        boxShadow: '0 0 10px rgba(59, 130, 246, 0.8)'
-                                                    }}></div>
-                                                    <div className="text-center">
-                                                        <div className="text-blue-300 font-medium text-sm">Currently Working On</div>
-                                                        <div className="text-white font-semibold text-lg">{tasks.find(t => t.id === activeTaskId)?.text || 'Unknown Task'}</div>
-                                                        {isRunning && taskSessionTimes[activeTaskId] > 0 && (
-                                                            <div className="text-green-400 text-xs font-medium mt-1">
-                                                                +{Math.round(taskSessionTimes[activeTaskId])} min this session
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* ================================ */}
-                                        {/* TIMER CONTROLS */}
-                                        {/* ================================ */}
-
-                                        <div className="flex gap-4 w-full max-w-md">
-                                            <button
-                                                onClick={startTimer}
-                                                disabled={isRunning}
-                                                className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-green-500 text-white rounded-2xl font-bold text-base hover:bg-green-600 hover:shadow-green-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(34,197,94,0.4)] hover:scale-105 active:scale-95"
-                                            >
-                                                <Play className="w-5 h-5" />
-                                                Start
-                                            </button>
-                                            <button
-                                                onClick={pauseTimer}
-                                                disabled={!isRunning}
-                                                className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-yellow-500 text-white rounded-2xl font-bold text-base hover:bg-yellow-600 hover:shadow-yellow-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(234,179,8,0.4)] hover:scale-105 active:scale-95"
-                                            >
-                                                <Pause className="w-5 h-5" />
-                                                Pause
-                                            </button>
-                                            <button
-                                                onClick={stopTimer}
-                                                className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-red-500 text-white rounded-2xl font-bold text-base hover:bg-red-600 hover:shadow-red-500/40 transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(239,68,68,0.4)] hover:scale-105 active:scale-95"
-                                            >
-                                                <Square className="w-5 h-5" />
-                                                Stop
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* ================================ */}
-                                {/* DEVELOPER MODE TOGGLE */}
-                                {/* ================================ */}
-
-                                <div className="mt-2 text-center">
-                                    <div
-                                        className="inline-block cursor-pointer select-none"
-                                        onClick={() => {
-                                            setDevClickCount(prev => {
-                                                const newCount = prev + 1;
-                                                if (newCount >= 5) {
-                                                    setTestMode(!testMode);
-                                                    return 0;
-                                                }
-                                                return newCount;
-                                            });
-                                        }}
+                        <div className="flex justify-center mb-8">
+                            <div className="bg-gray-800/40 backdrop-blur-md rounded-full p-1 border border-[#1a2331] shadow-[0_30px_60px_-10px_rgba(0,0,0,0.5),inset_0_1px_2px_rgba(255,255,255,0.05)] transform hover:scale-105 hover:translate-y-[-2px] transition-all duration-500 ease-out">
+                                <div className="flex">
+                                    {/* Timer Tab */}
+                                    <button
+                                        onClick={() => setActiveTab('timer')}
+                                        className={`px-4 py-2 rounded-full font-medium transition-all duration-300 text-sm flex items-center gap-2 ${activeTab === 'timer'
+                                            ? 'bg-indigo-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
                                     >
-                                        <span className="text-gray-500 text-xs hover:text-gray-400 transition-colors">
-                                            v1.0
-                                        </span>
-                                    </div>
-                                    {testMode && (
-                                        <div className="mt-2 px-3 py-1 bg-orange-900/30 rounded-full border border-orange-500/30">
-                                            <span className="text-xs text-orange-300 font-medium">
-                                                ⚡ Developer Mode Active
-                                            </span>
-                                        </div>
-                                    )}
+                                        <Target className="w-4 h-4" />
+                                        Timer
+                                    </button>
+
+                                    {/* Analytics Tab */}
+                                    <button
+                                        onClick={() => setActiveTab('analytics')}
+                                        className={`px-4 py-2 rounded-full font-medium transition-all duration-300 text-sm flex items-center gap-2 ${activeTab === 'analytics'
+                                            ? 'bg-indigo-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
+                                    >
+                                        <BarChart3 className="w-4 h-4" />
+                                        Analytics
+                                    </button>
+
+                                    {/* History Tab */}
+                                    <button
+                                        onClick={() => setActiveTab('history')}
+                                        className={`px-4 py-2 rounded-full font-medium transition-all duration-300 text-sm flex items-center gap-2 ${activeTab === 'history'
+                                            ? 'bg-indigo-500 text-white shadow-lg scale-105'
+                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                            }`}
+                                    >
+                                        <History className="w-4 h-4" />
+                                        History
+                                    </button>
                                 </div>
                             </div>
+                        </div>
 
-                            {/* ================================ */}
-                            {/* PROGRESS BAR SECTION */}
-                            {/* ================================ */}
+                        {/* ================================ */}
+                        {/* TIMER TAB CONTENT */}
+                        {/* ================================ */}
 
-                            <div className="p-4 mb-6 backdrop-blur-sm">
-                                <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
-                                            <Target className="w-5 h-5 text-indigo-500" />
-                                        </div>
-                                        <span className="text-base font-bold text-white">
-                                            {Math.round(todaySessionCount * 10) / 10} sessions today
-                                        </span>
-                                    </div>
+                        {activeTab === 'timer' && (
+                            <div>
+                                <div className="mb-8">
 
-                                    <div className="flex items-center gap-4 flex-wrap">
-                                        {/* Daily Goal Control */}
-                                        <div className="flex bg-indigo-500/10 items-center gap-2 px-4 py-2 border border-indigo-500/30 rounded-full shadow-inner backdrop-blur-sm">
-                                            <span className="text-sm font-medium text-white">Goal:</span>
-                                            <button
-                                                onClick={() => setDailyGoal(Math.max(60, dailyGoal - 60))}
-                                                className="w-6 h-6 rounded-full text-indigo-400 hover:text-white flex items-center justify-center transition"
-                                            >
-                                                -
-                                            </button>
-                                            <span className="text-sm font-bold text-white">{Math.floor(dailyGoal / 60)}h</span>
-                                            <button
-                                                onClick={() => setDailyGoal(Math.min(1440, dailyGoal + 60))}
-                                                className="w-6 h-6 rounded-full text-indigo-400 hover:text-white flex items-center justify-center transition"
-                                            >
-                                                +
-                                            </button>
-                                        </div>
+                                    {/* ================================ */}
+                                    {/* PROGRESS BAR SECTION - MAINTENANT EN HAUT */}
+                                    {/* ================================ */}
 
-                                        {/* Today's Time Display */}
-                                        <div className="flex items-center gap-2 px-4 py-2 bg-green-500/10 border border-green-500/20 rounded-full backdrop-blur-sm">
-                                            <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center">
-                                                <Clock className="w-3 h-3 text-green-400" />
+                                    <div className="p-2 mb-4 backdrop-blur-sm">
+                                        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-6 h-6 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
+                                                    <Target className="w-3 h-3 text-indigo-500" />
+                                                </div>
+                                                <span className="text-sm font-bold text-white">
+                                                    {Math.round(todaySessionCount * 10) / 10} sessions today
+                                                </span>
                                             </div>
-                                            <span className="text-sm font-bold text-green-400">
-                                                {Math.floor(totalTimeToday / 60)}h {Math.round(totalTimeToday % 60)}m
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
 
-                                {/* Progress Bar */}
-                                <div className="relative">
-                                    <div className="w-full h-4 bg-gray-700 rounded-full overflow-hidden shadow-inner">
-                                        <div
-                                            className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 transition-all duration-500 ease-out rounded-full shadow-lg"
-                                            style={{
-                                                width: `${Math.min((totalTimeToday / dailyGoal) * 100, 100)}%`,
-                                                boxShadow: '0 0 20px rgba(99, 102, 241, 0.5)'
-                                            }}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
+                                            <div className="flex items-center gap-3 flex-wrap">
+                                                {/* Daily Goal Control */}
+                                                <div className="flex bg-indigo-500/10 items-center gap-1 px-3 py-1 border border-indigo-500/30 rounded-full shadow-inner backdrop-blur-sm">
+                                                    <span className="text-xs font-medium text-white">Goal:</span>
+                                                    <button
+                                                        onClick={() => setDailyGoal(Math.max(60, dailyGoal - 60))}
+                                                        className="w-4 h-4 rounded-full text-indigo-400 hover:text-white flex items-center justify-center transition text-xs"
+                                                    >
+                                                        -
+                                                    </button>
+                                                    <span className="text-xs font-bold text-white">{Math.floor(dailyGoal / 60)}h</span>
+                                                    <button
+                                                        onClick={() => setDailyGoal(Math.min(1440, dailyGoal + 60))}
+                                                        className="w-4 h-4 rounded-full text-indigo-400 hover:text-white flex items-center justify-center transition text-xs"
+                                                    >
+                                                        +
+                                                    </button>
+                                                </div>
 
-                            {/* ================================ */}
-                            {/* TASK INPUT SECTION */}
-                            {/* ================================ */}
-
-                            <div className="max-w-2xl mx-auto">
-                                <div className="relative">
-                                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-2xl blur-xl"></div>
-
-                                    <div className="relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 backdrop-blur-md rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.3),inset_0_1px_2px_rgba(255,255,255,0.05)] p-6 hover:shadow-[0_25px_50px_rgba(0,0,0,0.4)] transition-all duration-500">
-                                        <div className="flex items-center gap-3 mb-6">
-                                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center backdrop-blur-sm">
-                                                <Target className="w-5 h-5 text-indigo-400" />
+                                                {/* Today's Time Display */}
+                                                <div className="flex items-center gap-1 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full backdrop-blur-sm">
+                                                    <div className="w-4 h-4 rounded-full bg-green-500/20 flex items-center justify-center">
+                                                        <Clock className="w-2 h-2 text-green-400" />
+                                                    </div>
+                                                    <span className="text-xs font-bold text-green-400">
+                                                        {Math.floor(totalTimeToday / 60)}h {Math.round(totalTimeToday % 60)}m
+                                                    </span>
+                                                </div>
                                             </div>
-                                            <h3 className="text-xl font-semibold text-white/90 tracking-tight">Set Your Focus</h3>
                                         </div>
 
-                                        <div className="space-y-6">
-                                            {/* Task Input Field */}
-                                            <div className="relative">
-                                                <input
-                                                    type="text"
-                                                    value={currentTask}
-                                                    onChange={(e) => setCurrentTask(e.target.value)}
-                                                    placeholder="What are you working on?"
-                                                    className="w-full px-5 py-4 text-white/90 placeholder-white/40 bg-gray-700/30 backdrop-blur-sm border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 text-lg transition-all duration-300 hover:bg-gray-700/40 focus:bg-gray-700/50"
-                                                    onKeyPress={(e) => e.key === 'Enter' && addTask()}
+                                        {/* Progress Bar */}
+                                        <div className="relative">
+                                            <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden shadow-inner">
+                                                <div
+                                                    className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 transition-all duration-500 ease-out rounded-full shadow-lg"
+                                                    style={{
+                                                        width: `${Math.min((totalTimeToday / dailyGoal) * 100, 100)}%`,
+                                                        boxShadow: '0 0 15px rgba(99, 102, 241, 0.4)'
+                                                    }}
                                                 />
                                             </div>
-
-                                            {/* Action Buttons */}
-                                            <div className="flex gap-4">
-                                                <button
-                                                    onClick={addTask}
-                                                    className="flex-1 group relative overflow-hidden px-5 py-3 bg-gradient-to-r from-indigo-500/80 to-purple-500/80 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(99,102,241,0.3)] hover:shadow-[0_15px_40px_rgba(99,102,241,0.4)] hover:scale-105 active:scale-95"
-                                                >
-                                                    <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                                                    <div className="relative flex items-center justify-center gap-2 font-semibold">
-                                                        <Plus className="w-5 h-5" />
-                                                        Add to Task List
-                                                    </div>
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* ================================ */}
-                            {/* TASK MANAGEMENT SECTION */}
-                            {/* ================================ */}
-
-                            <div className="mt-8">
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-                                    {/* ================================ */}
-                                    {/* ACTIVE TASKS PANEL */}
-                                    {/* ================================ */}
-
-                                    <div className="relative">
-                                        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-2xl blur-xl"></div>
-
-                                        <div className="relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 backdrop-blur-md rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.3),inset_0_1px_2px_rgba(255,255,255,0.05)] p-6 hover:shadow-[0_25px_50px_rgba(0,0,0,0.4)] transition-all duration-500">
-
-                                            {/* Panel Header */}
-                                            <div className="flex items-center gap-3 mb-6">
-                                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border border-blue-500/30 flex items-center justify-center backdrop-blur-sm">
-                                                    <Check className="w-5 h-5 text-blue-400" />
-                                                </div>
-                                                <h3 className="text-xl font-semibold text-white/90 tracking-tight">Ongoing tasks</h3>
-                                                <div className="ml-auto px-3 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full shadow-[0_0_12px_rgba(59,130,246,0.3)]">
-                                                    <span className="text-sm font-medium text-blue-400">{tasks.length}</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Task List */}
-                                            <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-                                                {tasks.length === 0 ? (
-                                                    /* Empty State */
-                                                    <div className="text-center py-8 px-4 rounded-xl bg-gray-700/20 border border-dashed border-white/10">
-                                                        <Target className="w-8 h-8 mx-auto mb-3 text-white/30" />
-                                                        <p className="text-white/40 text-sm">No active tasks</p>
-                                                        <p className="text-white/30 text-xs mt-1">Add a task above to get started</p>
-                                                    </div>
-                                                ) : (
-                                                    /* Task Items */
-                                                    tasks.map((task) => (
-                                                        <TaskItem
-                                                            key={task.id}
-                                                            task={task}
-                                                            onComplete={completeTask}
-                                                            onDelete={(id) => {
-                                                                // Prevent deletion of default tasks
-                                                                const taskToDelete = tasks.find(t => t.id === id);
-                                                                if (taskToDelete?.isDefault) {
-                                                                    return;
-                                                                }
-
-                                                                // Handle active task switching if deleting current active task
-                                                                if (id === activeTaskId && isRunning) {
-                                                                    const currentTaskIndex = tasks.findIndex(t => t.id === id);
-                                                                    let nextActiveTaskId = null;
-
-                                                                    // Find next non-default task
-                                                                    for (let i = currentTaskIndex + 1; i < tasks.length; i++) {
-                                                                        if (!tasks[i].isDefault) {
-                                                                            nextActiveTaskId = tasks[i].id;
-                                                                            break;
-                                                                        }
-                                                                    }
-
-                                                                    // If no task found after, look before current
-                                                                    if (!nextActiveTaskId) {
-                                                                        for (let i = 0; i < currentTaskIndex; i++) {
-                                                                            if (!tasks[i].isDefault) {
-                                                                                nextActiveTaskId = tasks[i].id;
-                                                                                break;
-                                                                            }
-                                                                        }
-                                                                    }
-
-                                                                    // If still no non-default task, use default task
-                                                                    if (!nextActiveTaskId) {
-                                                                        const defaultTask = tasks.find(t => t.isDefault);
-                                                                        if (defaultTask) {
-                                                                            nextActiveTaskId = defaultTask.id;
-                                                                        }
-                                                                    }
-
-                                                                    updateActiveTaskTime();
-                                                                    setActiveTaskId(nextActiveTaskId);
-                                                                    if (nextActiveTaskId) {
-                                                                        setLastUpdateTime(Date.now());
-                                                                    }
-                                                                }
-
-                                                                setTasks(prev => prev.filter(t => t.id !== id));
-                                                            }}
-                                                            isActive={true}
-                                                            activeTaskId={activeTaskId}
-                                                            onSetActive={setActiveTask}
-                                                            canChangeActive={isRunning}
-                                                            taskTimes={taskSessionTimes}
-                                                        />
-                                                    ))
-                                                )}
-                                            </div>
                                         </div>
                                     </div>
 
-                                    {/* ================================ */}
-                                    {/* RECENTLY COMPLETED PANEL */}
-                                    {/* ================================ */}
+                                    <div className="bg-gradient-to-br from-[#1a2331] to-[#0e111a] rounded-2xl border border-[#1a2331] shadow-[inset_0_1px_3px_rgba(255,255,255,0.05),0_35px_60px_-15px_rgba(0,0,0,0.5)] p-1 mb-1 relative">
 
-                                    <div className="relative">
-                                        <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 rounded-2xl blur-xl"></div>
+                                        {/* ================================ */}
+                                        {/* ACTIVE TASK DISPLAY - TOP LEFT */}
+                                        {/* ================================ */}
 
-                                        <div className="relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 backdrop-blur-md rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.3),inset_0_1px_2px_rgba(255,255,255,0.05)] p-6 hover:shadow-[0_25px_50px_rgba(0,0,0,0.4)] transition-all duration-500">
-
-                                            {/* Panel Header */}
-                                            <div className="flex items-center gap-3 mb-6">
-                                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center backdrop-blur-sm">
-                                                    <Check className="w-5 h-5 text-emerald-400" />
-                                                </div>
-                                                <h3 className="text-xl font-semibold text-white/90 tracking-tight">Recently Completed</h3>
-                                                <div className="ml-auto px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded-full">
-                                                    <span className="text-sm font-medium text-emerald-400">{recentCompletedTasks.length}</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Completed Task List */}
-                                            <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-                                                {recentCompletedTasks.length === 0 ? (
-                                                    /* Empty State */
-                                                    <div className="text-center py-8 px-4 rounded-xl bg-gray-700/20 border border-dashed border-white/10">
-                                                        <Check className="w-8 h-8 mx-auto mb-3 text-white/30" />
-                                                        <p className="text-white/40 text-sm">No completed tasks yet</p>
-                                                        <p className="text-white/30 text-xs mt-1">Complete tasks to see them here</p>
+                                        <div className="absolute top-4 left-4 z-10 w-48">
+                                            {activeTaskId && tasks.length > 0 && (
+                                                <div className="bg-black/30 backdrop-blur-sm rounded-lg p-4 border border-white/10">
+                                                    <div className="flex items-center gap-1 mb-4">
+                                                        <Target className="w-3 h-3 text-blue-400/60" />
+                                                        <span className="text-xs font-medium text-white/70">Active Task</span>
                                                     </div>
-                                                ) : (
-                                                    /* Completed Task Items - Show last 3 in reverse order */
-                                                    recentCompletedTasks.slice(-3).reverse().map((task) => (
-                                                        <TaskItem
-                                                            key={task.id}
-                                                            task={task}
-                                                            onComplete={() => { }}
-                                                            onDelete={deleteCompletedTask}
-                                                            isActive={false}
-                                                        />
-                                                    ))
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                                                    <div className="space-y-1">
+                                                        {(() => {
+                                                            const activeTask = tasks.find(t => t.id === activeTaskId);
+                                                            if (!activeTask) return null;
 
-                {/* ================================ */}
-                {/* ANALYTICS TAB CONTENT */}
-                {/* ================================ */}
+                                                            const sessionTime = taskSessionTimes[activeTask.id] || 0;
+                                                            const accumulatedTime = activeTask.accumulatedTime || 0;
+                                                            const totalTime = accumulatedTime + sessionTime;
 
-                {activeTab === 'analytics' && (
-                    <div className="bg-gray-800 rounded-xl shadow-xl p-8">
-
-                        {/* Analytics Header */}
-                        <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-bold text-white">Analytics</h2>
-                            <button
-                                onClick={() => setShowInstructions(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
-                            >
-                                <HelpCircle className="w-4 h-4" />
-                                How to Share Data
-                            </button>
-                        </div>
-
-                        {/* View Mode Selector */}
-                        <div className="flex justify-center mb-8">
-                            <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl p-1 shadow-xl border border-gray-700/50">
-                                <div className="flex gap-1">
-                                    <button
-                                        onClick={() => setViewMode('week')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${viewMode === 'week'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <Calendar className="w-4 h-4" />
-                                        Week
-                                    </button>
-                                    <button
-                                        onClick={() => setViewMode('month')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${viewMode === 'month'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <CalendarDays className="w-4 h-4" />
-                                        Month
-                                    </button>
-                                    <button
-                                        onClick={() => setViewMode('year')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${viewMode === 'year'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <CalendarRange className="w-4 h-4" />
-                                        Year
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Charts Grid */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-
-                            {/* Time Spent Chart */}
-                            <div>
-                                <h3 className="text-xl font-semibold mb-4 text-gray-200">Time Spent (Hours)</h3>
-                                <div className="h-64 bg-gray-900/50 rounded-xl p-4">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={getChartData('time')} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                            <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
-                                            <YAxis stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
-                                            <Bar dataKey="value" fill="url(#timeGradient)" radius={[4, 4, 0, 0]} />
-                                            <defs>
-                                                <linearGradient id="timeGradient" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="0%" stopColor="#6366f1" />
-                                                    <stop offset="100%" stopColor="#3b82f6" />
-                                                </linearGradient>
-                                            </defs>
-                                        </BarChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-
-                            {/* Tasks Completed Chart */}
-                            <div>
-                                <h3 className="text-xl font-semibold mb-4 text-gray-200">Tasks Completed</h3>
-                                <div className="h-64 bg-gray-900/50 rounded-xl p-4">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={getChartData('tasks')} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                            <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
-                                            <YAxis stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
-                                            <Bar dataKey="value" fill="url(#taskGradient)" radius={[4, 4, 0, 0]} />
-                                            <defs>
-                                                <linearGradient id="taskGradient" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="0%" stopColor="#10b981" />
-                                                    <stop offset="100%" stopColor="#059669" />
-                                                </linearGradient>
-                                            </defs>
-                                        </BarChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Statistics Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-                            <div className="bg-indigo-900/30 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-indigo-300">
-                                    {timeHistory.reduce((sum, session) => sum + (session.totalMinutes || 0), 0)}
-                                </div>
-                                <div className="text-sm text-blue-400">Total Minutes</div>
-                            </div>
-                            <div className="bg-green-900/30 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-green-300">
-                                    {taskHistory.length}
-                                </div>
-                                <div className="text-sm text-green-400">Tasks Completed</div>
-                            </div>
-                            <div className="bg-purple-900/30 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-purple-300">
-                                    {timeHistory.reduce((sum, session) => sum + (session.sessionCount || 0), 0)}
-                                </div>
-                                <div className="text-sm text-purple-400">Total Sessions</div>
-                            </div>
-                            <div className="bg-orange-900/30 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-orange-300">
-                                    {timeHistory.reduce((sum, session) => sum + (session.cycleCount || 0), 0)}
-                                </div>
-                                <div className="text-sm text-orange-400">Total Cycles</div>
-                            </div>
-                            <div className="bg-red-900/30 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-red-300 flex items-center justify-center gap-2">
-                                    <Flame className="w-6 h-6" />
-                                    {longestSessionStreak}
-                                </div>
-                                <div className="text-sm text-red-400">Best Streak</div>
-                            </div>
-                        </div>
-
-                        {/* Data Management Section */}
-                        <div className="mt-8 pt-6 border-t border-gray-700">
-                            <div className="flex justify-between items-center mb-4">
-                                <div>
-                                    <h3 className="text-lg font-semibold text-gray-200">Data Management</h3>
-                                    <p className="text-sm text-gray-400 mt-1">
-                                        Your data is automatically saved to your app directory. Share with friends!
-                                    </p>
-                                </div>
-                                <div className="space-x-2">
-                                    <label className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200 cursor-pointer">
-                                        Import Data
-                                        <input
-                                            type="file"
-                                            accept=".json"
-                                            onChange={importData}
-                                            className="hidden"
-                                        />
-                                    </label>
-                                    <button
-                                        onClick={exportData}
-                                        className="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
-                                    >
-                                        Export Data
-                                    </button>
-                                    <button
-                                        onClick={clearAllData}
-                                        className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-200"
-                                    >
-                                        Clear All Data
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* ADD THIS NEW SECTION - Individual Clear Options */}
-                            <div className="mt-4 p-4 bg-gray-700/30 rounded-lg border border-gray-600/30">
-                                <h4 className="text-md font-medium text-gray-200 mb-3">Clear Specific Data</h4>
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        onClick={() => {
-                                            if (window.confirm('Clear all work sessions? This will also reset your streak data.')) {
-                                                setTimeHistory([]);
-                                                setCurrentSessionStreak(0);
-                                                setLongestSessionStreak(0);
-                                                setLastSessionDate(null);
-                                            }
-                                        }}
-                                        className="px-3 py-2 bg-red-500/80 text-white rounded-md hover:bg-red-500 transition-all duration-200 text-sm"
-                                    >
-                                        Clear Work Sessions
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            if (window.confirm('Clear all completed tasks?')) {
-                                                setTaskHistory([]);
-                                            }
-                                        }}
-                                        className="px-3 py-2 bg-red-500/80 text-white rounded-md hover:bg-red-500 transition-all duration-200 text-sm"
-                                    >
-                                        Clear Completed Tasks
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            if (window.confirm('Reset streak data only? (keeps your session history)')) {
-                                                setCurrentSessionStreak(0);
-                                                setLongestSessionStreak(0);
-                                                setLastSessionDate(null);
-                                            }
-                                        }}
-                                        className="px-3 py-2 bg-orange-500/80 text-white rounded-md hover:bg-orange-500 transition-all duration-200 text-sm"
-                                    >
-                                        Reset Streaks Only
-                                    </button>
-                                </div>
-                                <p className="text-xs text-gray-400 mt-2">
-                                    Note: Clearing work sessions will reset streak data since streaks are calculated from session history.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* ================================ */}
-                {/* HISTORY TAB CONTENT */}
-                {/* ================================ */}
-
-                {activeTab === 'history' && (
-                    <div>
-                        {/* Attribution */}
-                        <div className="text-1xl font-bold text-white">
-                            <a href="https://www.flaticon.com/free-icons/stopwatch" title="stopwatch icons">
-                                Stopwatch icons created by alfanz - Flaticon
-                            </a>
-                        </div>
-
-                        {/* History Header */}
-                        <div className="bg-gray-800 rounded-xl shadow-xl p-8 mb-6">
-                            <div className="flex items-center gap-2 mb-6">
-                                <History className="w-6 h-6 text-indigo-500" />
-                                <h2 className="text-2xl font-bold text-white">Session History</h2>
-                            </div>
-
-                            <div className="flex justify-between items-center mb-6">
-                                <div>
-                                    <p className="text-gray-300">
-                                        View your completed work sessions organized by time period
-                                    </p>
-                                </div>
-
-                                {/* Sound Test Buttons Only */}
-                                <div className="space-x-2">
-                                    <button
-                                        onClick={() => playBreakWarningSound()}
-                                        className="px-2 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-all duration-200"
-                                    >
-                                        🔔 Test Warning
-                                    </button>
-                                    <button
-                                        onClick={() => playSessionStartSound()}
-                                        className="px-2 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200"
-                                    >
-                                        🎵 Test Start Sound
-                                    </button>
-                                    <button
-                                        onClick={() => playFinishSound()}
-                                        className="px-2 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
-                                    >
-                                        🔊 Test Sound
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Time Period Selector */}
-                        <div className="flex justify-center mb-8">
-                            <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl p-1 shadow-xl border border-gray-700/50">
-                                <div className="flex gap-1">
-                                    <button
-                                        onClick={() => setHistoryViewMode('day')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'day'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <Calendar className="w-4 h-4" />
-                                        Day
-                                    </button>
-                                    <button
-                                        onClick={() => setHistoryViewMode('week')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'week'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <Calendar className="w-4 h-4" />
-                                        Week
-                                    </button>
-                                    <button
-                                        onClick={() => setHistoryViewMode('month')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'month'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <CalendarDays className="w-4 h-4" />
-                                        Month
-                                    </button>
-                                    <button
-                                        onClick={() => setHistoryViewMode('year')}
-                                        className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'year'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
-                                            : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
-                                            }`}
-                                    >
-                                        <CalendarRange className="w-4 h-4" />
-                                        Year
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* History Content */}
-                        {timeHistory.length === 0 && taskHistory.length === 0 ? (
-                            /* Empty State */
-                            <div className="text-center py-12 text-gray-400">
-                                <History className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                                <p>No history yet. Complete some sessions to see your progress!</p>
-                            </div>
-                        ) : (
-                            /* History Grid */
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-                                {/* Work Sessions History */}
-                                <div className="bg-gray-800 rounded-xl shadow-xl p-6">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-xl font-semibold text-white">Work Sessions ({timeHistory.length})</h3>
-                                        <button
-                                            onClick={() => {
-                                                if (window.confirm('Are you sure you want to delete all work sessions? This will also reset your streak data and cannot be undone.')) {
-                                                    setTimeHistory([]);
-                                                    // Reset streak data when clearing work sessions
-                                                    setCurrentSessionStreak(0);
-                                                    setLongestSessionStreak(0);
-                                                    setLastSessionDate(null);
-                                                }
-                                            }}
-                                            className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-200 text-sm"
-                                        >
-                                            Clear All
-                                        </button>
-                                    </div>
-
-                                    <div className="bg-gray-800 rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3">
-                                        {timeHistory.length === 0 ? (
-                                            <p className="text-gray-400 italic text-center py-8">No work sessions recorded yet</p>
-                                        ) : (
-                                            <div className="space-y-3">
-                                                {groupHistoryByPeriod(timeHistory, historyViewMode).map((period) => (
-                                                    <div key={period.key} className="border border-gray-700 rounded-lg overflow-hidden">
-                                                        {/* Period Header */}
-                                                        <button
-                                                            onClick={() => toggleTimePeriod(`sessions-${period.key}`)}
-                                                            className="w-full flex items-center justify-between p-3 bg-gray-700/50 hover:bg-gray-700 transition-all duration-200"
-                                                        >
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`transform transition-transform duration-200 ${expandedTimePeriods.has(`sessions-${period.key}`) ? 'rotate-90' : ''
-                                                                    }`}>
-                                                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                                                    </svg>
+                                                            return (
+                                                                <div className="flex items-center gap-2 text-xs">
+                                                                    <div className="w-1 h-1 bg-blue-400/60 rounded-full flex-shrink-0 animate-pulse"></div>
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <div className="text-white/80 font-medium">
+                                                                            {activeTask.text.length > 20 ? `${activeTask.text.substring(0, 20)}...` : activeTask.text}
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2 mt-0.5 text-xs">
+                                                                            {accumulatedTime > 0 && (
+                                                                                <span className="text-blue-400/50">
+                                                                                    Prev: {Math.round(accumulatedTime)}m
+                                                                                </span>
+                                                                            )}
+                                                                            {sessionTime > 0 && (
+                                                                                <span className="text-green-400/60">
+                                                                                    +{Math.round(sessionTime)}m
+                                                                                </span>
+                                                                            )}
+                                                                            {totalTime > 0 && (
+                                                                                <span className="text-purple-400/50">
+                                                                                    Tot: {Math.round(totalTime)}m
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
-                                                                <span className="font-medium text-white">{period.label}</span>
-                                                            </div>
-                                                            <div className="flex items-center gap-4">
-                                                                <span className="text-sm text-gray-400">
-                                                                    {period.items.length} session{period.items.length !== 1 ? 's' : ''}
-                                                                </span>
-                                                                <span className="text-sm text-indigo-400 font-medium">
-                                                                    {Math.round(period.items.reduce((sum, item) => sum + (item.totalMinutes || 0), 0))} min
-                                                                </span>
-                                                            </div>
-                                                        </button>
-
-                                                        {/* Period Content */}
-                                                        {expandedTimePeriods.has(`sessions-${period.key}`) && (
-                                                            <div className="p-3 bg-gray-800/50 space-y-2">
-                                                                {period.items.map((session) => (
-                                                                    <SessionHistoryItem
-                                                                        key={session.id}
-                                                                        session={session}
-                                                                        onDelete={deleteTimeSession}
-                                                                        isExpanded={expandedSessions.has(session.id)}
-                                                                        onToggle={() => {
-                                                                            const newExpanded = new Set(expandedSessions);
-                                                                            if (newExpanded.has(session.id)) {
-                                                                                newExpanded.delete(session.id);
-                                                                            } else {
-                                                                                newExpanded.add(session.id);
-                                                                            }
-                                                                            setExpandedSessions(newExpanded);
-                                                                        }}
-                                                                    />
-                                                                ))}
-                                                            </div>
-                                                        )}
+                                                            );
+                                                        })()}
                                                     </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* ================================ */}
+                                        {/* SESSION STATS - TOP RIGHT */}
+                                        {/* ================================ */}
+
+                                        <div className="absolute top-4 right-4 z-10 w-44">
+                                            <div className="bg-black/30 backdrop-blur-sm rounded-lg p-2 border border-white/10">
+                                                <div className="flex items-center gap-1 mb-1">
+                                                    <Flame className="w-3 h-3 text-orange-400/60" />
+                                                    <span className="text-xs font-medium text-white/70">Session</span>
+                                                </div>
+
+                                                {/* Session/Cycle Stats Grid */}
+                                                <div className="grid grid-cols-2 gap-1 mb-1">
+                                                    <div className="text-center">
+                                                        <div className="text-xs font-bold text-blue-400/80">{tempSessionCount}</div>
+                                                        <div className="text-xs text-white/50">Sessions</div>
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <div className="text-xs font-bold text-green-400/80">{tempCycleCount}</div>
+                                                        <div className="text-xs text-white/50">Cycles</div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Streak/Time Stats Grid */}
+                                                <div className="grid grid-cols-2 gap-1 mb-1">
+                                                    <div className="text-center">
+                                                        <div className="text-xs font-bold text-orange-400/80">{tempOverallStreak}</div>
+                                                        <div className="text-xs text-white/50">Streak</div>
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <div className="text-xs font-bold text-purple-400/80">
+                                                            {Math.round(Object.values(taskSessionTimes).reduce((sum, time) => sum + time, 0))}m
+                                                        </div>
+                                                        <div className="text-xs text-white/50">Total</div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Task Breakdown Display */}
+                                                {Object.keys(taskSessionTimes).length > 0 && (
+                                                    <div className="mt-1 pt-1 border-t border-white/10">
+                                                        <div className="text-xs text-white/60 mb-1">Tasks:</div>
+                                                        <div className="space-y-0.5">
+                                                            {Object.entries(taskSessionTimes).map(([taskId, minutes]) => {
+                                                                if (minutes === 0) return null;
+
+                                                                const storedName = taskSessionNames[taskId];
+                                                                const currentTask = tasks.find(t => t.id === parseInt(taskId));
+                                                                const taskName = storedName || currentTask?.text || `Task ID: ${taskId}`;
+
+                                                                const isActive = parseInt(taskId) === activeTaskId;
+                                                                const isCompleted = !currentTask && storedName;
+
+                                                                return (
+                                                                    <div key={taskId} className="flex items-center justify-between text-xs">
+                                                                        <span className={`truncate flex-1 ${isActive ? 'text-blue-300/80' :
+                                                                            isCompleted ? 'text-green-300/80' : 'text-white/50'
+                                                                            }`}>
+                                                                            {isActive && '→ '}{taskName}
+                                                                            {isCompleted && ' ✓'}
+                                                                        </span>
+                                                                        <span className={`font-medium ml-1 ${isActive ? 'text-blue-400/80' :
+                                                                            isCompleted ? 'text-green-400/80' : 'text-white/60'
+                                                                            }`}>
+                                                                            {Math.round(minutes)}m
+                                                                        </span>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Streak Indicator Dots */}
+                                                <div className="flex items-center justify-center gap-1 mt-1">
+                                                    {[...Array(Math.min(Math.floor(currentSessionStreak * 2), 4))].map((_, i) => (
+                                                        <div
+                                                            key={i}
+                                                            className="w-1 h-1 bg-orange-400/60 rounded-full animate-pulse"
+                                                            style={{ animationDelay: `${i * 150}ms` }}
+                                                        ></div>
+                                                    ))}
+                                                    {currentSessionStreak > 2 && (
+                                                        <span className="text-xs text-orange-400/60 font-medium ml-1">
+                                                            +{Math.floor((currentSessionStreak - 2) * 2)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-white/40 text-center mt-1">
+                                                    Stop = Save
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* ================================ */}
+                                        {/* TIMER MODE SELECTION */}
+                                        {/* ================================ */}
+
+                                        <div className="flex justify-center mb-8">
+                                            <div className="flex gap-3 bg-gray-700/30 backdrop-blur-md p-3 rounded-full border border-gray-500/20 shadow-[0_15px_40px_rgba(0,0,0,0.35),inset_0_1px_2px_rgba(255,255,255,0.05)] transition-all duration-500">
+                                                {[
+                                                    { key: '25/5', label: '25' },
+                                                    { key: '50/10', label: '50' },
+                                                    { key: 'stopwatch', label: '∞' }
+                                                ].map((m) => (
+                                                    <button
+                                                        key={m.key}
+                                                        onClick={() => {
+                                                            setMode(m.key);
+                                                            setIsRunning(false);
+                                                            setIsBreak(false);
+                                                        }}
+                                                        className={`w-10 h-10 rounded-full text-1xl font-bold transition-all duration-300 ease-out ${mode === m.key
+                                                            ? 'bg-indigo-500 text-white shadow-[0_10px_25px_rgba(99,102,241,0.5)] scale-110 ring-2 ring-indigo-300'
+                                                            : 'bg-gray-600/60 text-gray-200 hover:bg-gray-500/70 hover:scale-105 hover:shadow-[0_4px_12px_rgba(0,0,0,0.3)]'
+                                                            }`}
+                                                    >
+                                                        {m.label}
+                                                    </button>
                                                 ))}
                                             </div>
-                                        )}
-                                    </div>
-                                </div>
+                                        </div>
 
-                                {/* Completed Tasks History */}
-                                <div className="bg-gray-800 rounded-xl shadow-xl p-6">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-xl font-semibold text-white">Completed Tasks ({taskHistory.length})</h3>
-                                        <button
-                                            onClick={() => {
-                                                if (window.confirm('Are you sure you want to delete all completed tasks? This action cannot be undone.')) {
-                                                    setTaskHistory([]);
-                                                }
-                                            }}
-                                            className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-200 text-sm"
-                                        >
-                                            Clear All
-                                        </button>
-                                    </div>
+                                        {/* ================================ */}
+                                        {/* MAIN TIMER DISPLAY */}
+                                        {/* ================================ */}
 
-                                    <div className="bg-gray-800 rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3">
-                                        {taskHistory.length === 0 ? (
-                                            <p className="text-gray-400 italic text-center py-8">No completed tasks yet</p>
-                                        ) : (
-                                            <div className="space-y-3">
-                                                {groupHistoryByPeriod(taskHistory, historyViewMode).map((period) => (
-                                                    <div key={period.key} className="border border-gray-700 rounded-lg overflow-hidden">
-                                                        {/* Period Header */}
-                                                        <button
-                                                            onClick={() => toggleTimePeriod(`tasks-${period.key}`)}
-                                                            className="w-full flex items-center justify-between p-3 bg-gray-700/50 hover:bg-gray-700 transition-all duration-200"
-                                                        >
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`transform transition-transform duration-200 ${expandedTimePeriods.has(`tasks-${period.key}`) ? 'rotate-90' : ''
-                                                                    }`}>
-                                                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                                                    </svg>
-                                                                </div>
-                                                                <span className="font-medium text-white">{period.label}</span>
+                                        <div className="flex justify-center">
+                                            <div className="flex flex-col items-center">
+                                                {/* Timer Circle */}
+                                                <div className="relative mb-8">
+                                                    <div className="absolute inset-0 w-96 h-96 rounded-full bg-indigo-500 blur-3xl opacity-25 scale-110"></div>
+                                                    <div className="relative w-96 h-96 rounded-full bg-gradient-to-br from-gray-800 to-gray-900 border-4 border-gray-700 shadow-3xl flex items-center justify-center backdrop-blur-sm">
+                                                        <div className="absolute inset-6 rounded-full bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20"></div>
+
+                                                        {/* Progress Ring */}
+                                                        <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 384 384">
+                                                            <circle cx="192" cy="192" r="168" fill="none" stroke="#374151" strokeWidth="12" className="opacity-30" />
+                                                            <circle
+                                                                cx="192" cy="192" r="168" fill="none" stroke="url(#gradient)" strokeWidth="12" strokeLinecap="round"
+                                                                strokeDasharray={`${2 * Math.PI * 168}`}
+                                                                strokeDashoffset={mode === 'stopwatch' ? 0 : 2 * Math.PI * 168 * (1 - (sessionElapsedTime / (mode === '25/5' ? (isBreak ? 5 * 60 : 25 * 60) : (isBreak ? 10 * 60 : 50 * 60))))}
+                                                                className="transition-all duration-1000 ease-out drop-shadow-lg"
+                                                                style={{ filter: 'drop-shadow(0 0 12px #818cf8)' }}
+                                                            />
+                                                            <defs>
+                                                                <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                                    <stop offset="0%" stopColor="#6366f1" />
+                                                                    <stop offset="100%" stopColor="#a855f7" />
+                                                                </linearGradient>
+                                                            </defs>
+                                                        </svg>
+
+                                                        {/* Timer Display  */}
+                                                        <div className="relative z-10 text-center">
+                                                            <div className="text-8xl font-mono font-bold text-white mb-3 leading-none tracking-tight drop-shadow-2xl">
+                                                                {formatTime(timeLeft)}
                                                             </div>
-                                                            <div className="flex items-center gap-4">
-                                                                <span className="text-sm text-gray-400">
-                                                                    {period.items.length} task{period.items.length !== 1 ? 's' : ''}
-                                                                </span>
-                                                                <span className="text-sm text-emerald-400 font-medium">
-                                                                    {Math.round(period.items.reduce((sum, item) => sum + (item.duration || 0), 0))} min
-                                                                </span>
+                                                            {isRunning && (
+                                                                <div className={`inline-flex items-center gap-1 px-3 py-2 rounded-full text-sm font-semibold ${isBreak
+                                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                                                    : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                                                                    } backdrop-blur-sm`}>
+                                                                    <span className="text-base">{isBreak ? '☕' : '🎯'}</span>
+                                                                    {isBreak ? 'Break Time' : 'Focus Time'}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Test Mode Indicator */}
+                                                            {testMode && (
+                                                                <div className="absolute -top-2 -right-2 px-2 py-1 bg-yellow-500 text-yellow-900 text-xs font-bold rounded-full shadow-lg animate-pulse">
+                                                                    ++
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* ================================ */}
+                                                {/* TIMER CONTROLS */}
+                                                {/* ================================ */}
+
+                                                <div className="flex gap-4 w-full max-w-md">
+                                                    <button
+                                                        onClick={startTimer}
+                                                        disabled={isRunning}
+                                                        className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-green-500 text-white rounded-2xl font-bold text-base hover:bg-green-600 hover:shadow-green-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(34,197,94,0.4)] hover:scale-105 active:scale-95"
+                                                    >
+                                                        <Play className="w-3 h-3" />
+                                                        Start
+                                                    </button>
+                                                    <button
+                                                        onClick={pauseTimer}
+                                                        disabled={!isRunning}
+                                                        className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-yellow-500 text-white rounded-2xl font-bold text-base hover:bg-yellow-600 hover:shadow-yellow-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(234,179,8,0.4)] hover:scale-105 active:scale-95"
+                                                    >
+                                                        <Pause className="w-3 h-3" />
+                                                        Pause
+                                                    </button>
+                                                    <button
+                                                        onClick={stopTimer}
+                                                        className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-red-500 text-white rounded-2xl font-bold text-base hover:bg-red-600 hover:shadow-red-500/40 transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(239,68,68,0.4)] hover:scale-105 active:scale-95"
+                                                    >
+                                                        <Square className="w-3 h-3" />
+                                                        Stop
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* ================================ */}
+                                        {/* DEVELOPER MODE TOGGLE */}
+                                        {/* ================================ */}
+
+                                        <div className="mt-2 text-center">
+                                            <div
+                                                className="inline-block cursor-pointer select-none"
+                                                onClick={() => {
+                                                    setDevClickCount(prev => {
+                                                        const newCount = prev + 1;
+                                                        if (newCount >= 5) {
+                                                            setTestMode(!testMode);
+                                                            return 0;
+                                                        }
+                                                        return newCount;
+                                                    });
+                                                }}
+                                            >
+                                                <span className="text-gray-500 text-xs hover:text-gray-400 transition-colors">
+                                                    v1.0
+                                                </span>
+                                            </div>
+                                            {testMode && (
+                                                <div className="mt-2 px-3 py-1 bg-orange-900/30 rounded-full border border-orange-500/30">
+                                                    <span className="text-xs text-orange-300 font-medium">
+                                                        ⚡ Developer Mode Active
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* ================================ */}
+                                    {/* TASK INPUT SECTION */}
+                                    {/* ================================ */}
+
+                                    <div className="max-w-2xl mx-auto">
+                                        <div className="relative">
+                                            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-2xl blur-xl"></div>
+
+                                            <div className="relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 backdrop-blur-md rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.3),inset_0_1px_2px_rgba(255,255,255,0.05)] p-6 hover:shadow-[0_25px_50px_rgba(0,0,0,0.4)] transition-all duration-500">
+                                                <div className="flex items-center gap-3 mb-6">
+                                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center backdrop-blur-sm">
+                                                        <Target className="w-5 h-5 text-indigo-400" />
+                                                    </div>
+                                                    <h3 className="text-xl font-semibold text-white/90 tracking-tight">Set Your Focus</h3>
+                                                </div>
+
+                                                <div className="space-y-6">
+                                                    {/* Task Input Field */}
+                                                    <div className="relative">
+                                                        <input
+                                                            type="text"
+                                                            value={currentTask}
+                                                            onChange={(e) => setCurrentTask(e.target.value)}
+                                                            placeholder="What are you working on?"
+                                                            className="w-full px-5 py-4 text-white/90 placeholder-white/40 bg-gray-700/30 backdrop-blur-sm border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 text-lg transition-all duration-300 hover:bg-gray-700/40 focus:bg-gray-700/50"
+                                                            onKeyPress={(e) => e.key === 'Enter' && addTask()}
+                                                        />
+                                                    </div>
+
+                                                    {/* Action Buttons */}
+                                                    <div className="flex gap-4">
+                                                        <button
+                                                            onClick={addTask}
+                                                            className="flex-1 group relative overflow-hidden px-5 py-3 bg-gradient-to-r from-indigo-500/80 to-purple-500/80 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl transition-all duration-300 ease-out shadow-[0_10px_30px_rgba(99,102,241,0.3)] hover:shadow-[0_15px_40px_rgba(99,102,241,0.4)] hover:scale-105 active:scale-95"
+                                                        >
+                                                            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                            <div className="relative flex items-center justify-center gap-2 font-semibold">
+                                                                <Plus className="w-5 h-5" />
+                                                                Add to Task List
                                                             </div>
                                                         </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                                                        {/* Period Content */}
-                                                        {expandedTimePeriods.has(`tasks-${period.key}`) && (
-                                                            <div className="p-3 bg-gray-800/50 space-y-2">
-                                                                {period.items.map((task) => (
-                                                                    <TaskHistoryItem
-                                                                        key={task.id}
-                                                                        task={task}
-                                                                        onDelete={deleteTask}
-                                                                        isExpanded={expandedTasks.has(task.id)}
-                                                                        onToggle={() => {
-                                                                            const newExpanded = new Set(expandedTasks);
-                                                                            if (newExpanded.has(task.id)) {
-                                                                                newExpanded.delete(task.id);
-                                                                            } else {
-                                                                                newExpanded.add(task.id);
-                                                                            }
-                                                                            setExpandedTasks(newExpanded);
-                                                                        }}
-                                                                    />
-                                                                ))}
+                                    {/* ================================ */}
+                                    {/* TASK MANAGEMENT SECTION */}
+                                    {/* ================================ */}
+
+                                    <div className="mt-8">
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+                                            {/* ================================ */}
+                                            {/* ACTIVE TASKS PANEL */}
+                                            {/* ================================ */}
+
+                                            <div className="relative">
+                                                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-2xl blur-xl"></div>
+
+                                                <div className="relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 backdrop-blur-md rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.3),inset_0_1px_2px_rgba(255,255,255,0.05)] p-6 hover:shadow-[0_25px_50px_rgba(0,0,0,0.4)] transition-all duration-500">
+
+                                                    {/* Panel Header */}
+                                                    <div className="flex items-center gap-3 mb-6">
+                                                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border border-blue-500/30 flex items-center justify-center backdrop-blur-sm">
+                                                            <Check className="w-5 h-5 text-blue-400" />
+                                                        </div>
+                                                        <h3 className="text-xl font-semibold text-white/90 tracking-tight">Ongoing tasks</h3>
+                                                        <div className="ml-auto px-3 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full shadow-[0_0_12px_rgba(59,130,246,0.3)]">
+                                                            <span className="text-sm font-medium text-blue-400">{tasks.length - 1}</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Task List */}
+                                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                                                        {tasks.length === 0 ? (
+                                                            /* Empty State */
+                                                            <div className="text-center py-8 px-4 rounded-xl bg-gray-700/20 border border-dashed border-white/10">
+                                                                <Target className="w-8 h-8 mx-auto mb-3 text-white/30" />
+                                                                <p className="text-white/40 text-sm">No active tasks</p>
+                                                                <p className="text-white/30 text-xs mt-1">Add a task above to get started</p>
                                                             </div>
+                                                        ) : (
+                                                            /* Task Items */
+                                                            tasks.map((task) => (
+                                                                <TaskItem
+                                                                    key={task.id}
+                                                                    task={task}
+                                                                    onComplete={completeTask}
+                                                                    onDelete={(id) => {
+                                                                        // Prevent deletion of default tasks
+                                                                        const taskToDelete = tasks.find(t => t.id === id);
+                                                                        if (taskToDelete?.isDefault) {
+                                                                            return;
+                                                                        }
+
+                                                                        // Handle active task switching if deleting current active task
+                                                                        if (id === activeTaskId && isRunning) {
+                                                                            const currentTaskIndex = tasks.findIndex(t => t.id === id);
+                                                                            let nextActiveTaskId = null;
+
+                                                                            // Find next non-default task
+                                                                            for (let i = currentTaskIndex + 1; i < tasks.length; i++) {
+                                                                                if (!tasks[i].isDefault) {
+                                                                                    nextActiveTaskId = tasks[i].id;
+                                                                                    break;
+                                                                                }
+                                                                            }
+
+                                                                            // If no task found after, look before current
+                                                                            if (!nextActiveTaskId) {
+                                                                                for (let i = 0; i < currentTaskIndex; i++) {
+                                                                                    if (!tasks[i].isDefault) {
+                                                                                        nextActiveTaskId = tasks[i].id;
+                                                                                        break;
+                                                                                    }
+                                                                                }
+                                                                            }
+
+                                                                            // If still no non-default task, use default task
+                                                                            if (!nextActiveTaskId) {
+                                                                                const defaultTask = tasks.find(t => t.isDefault);
+                                                                                if (defaultTask) {
+                                                                                    nextActiveTaskId = defaultTask.id;
+                                                                                }
+                                                                            }
+
+                                                                            updateActiveTaskTime();
+                                                                            setActiveTaskId(nextActiveTaskId);
+                                                                            if (nextActiveTaskId) {
+                                                                                setLastUpdateTime(Date.now());
+                                                                            }
+                                                                        }
+
+                                                                        setTasks(prev => prev.filter(t => t.id !== id));
+                                                                    }}
+                                                                    isActive={true}
+                                                                    activeTaskId={activeTaskId}
+                                                                    onSetActive={setActiveTask}
+                                                                    canChangeActive={isRunning}
+                                                                    taskTimes={taskSessionTimes}
+                                                                />
+                                                            ))
                                                         )}
                                                     </div>
-                                                ))}
+                                                </div>
                                             </div>
-                                        )}
+
+                                            {/* ================================ */}
+                                            {/* RECENTLY COMPLETED PANEL */}
+                                            {/* ================================ */}
+
+                                            <div className="relative">
+                                                <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 rounded-2xl blur-xl"></div>
+
+                                                <div className="relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 backdrop-blur-md rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.3),inset_0_1px_2px_rgba(255,255,255,0.05)] p-6 hover:shadow-[0_25px_50px_rgba(0,0,0,0.4)] transition-all duration-500">
+
+                                                    {/* Panel Header */}
+                                                    <div className="flex items-center gap-3 mb-6">
+                                                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center backdrop-blur-sm">
+                                                            <Check className="w-5 h-5 text-emerald-400" />
+                                                        </div>
+                                                        <h3 className="text-xl font-semibold text-white/90 tracking-tight">Recently Completed</h3>
+                                                        <div className="ml-auto px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded-full">
+                                                            <span className="text-sm font-medium text-emerald-400">{recentCompletedTasks.length}</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Completed Task List */}
+                                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                                                        {recentCompletedTasks.length === 0 ? (
+                                                            /* Empty State */
+                                                            <div className="text-center py-8 px-4 rounded-xl bg-gray-700/20 border border-dashed border-white/10">
+                                                                <Check className="w-8 h-8 mx-auto mb-3 text-white/30" />
+                                                                <p className="text-white/40 text-sm">No completed tasks yet</p>
+                                                                <p className="text-white/30 text-xs mt-1">Complete tasks to see them here</p>
+                                                            </div>
+                                                        ) : (
+                                                            /* Completed Task Items - Show last 3 in reverse order */
+                                                            recentCompletedTasks.slice(-3).reverse().map((task) => (
+                                                                <TaskItem
+                                                                    key={task.id}
+                                                                    task={task}
+                                                                    onComplete={() => { }}
+                                                                    onDelete={deleteCompletedTask}
+                                                                    isActive={false}
+                                                                />
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         )}
+
+                        {/* ================================ */}
+                        {/* ANALYTICS TAB CONTENT */}
+                        {/* ================================ */}
+
+                        {activeTab === 'analytics' && (
+                            <div className="bg-gray-800 rounded-xl shadow-xl p-8">
+
+                                {/* Analytics Header */}
+                                <div className="flex items-center justify-between mb-6">
+                                    <h2 className="text-2xl font-bold text-white">Analytics</h2>
+                                    <button
+                                        onClick={() => setShowInstructions(true)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
+                                    >
+                                        <HelpCircle className="w-4 h-4" />
+                                        How to Share Data
+                                    </button>
+                                </div>
+
+                                {/* View Mode Selector */}
+                                <div className="flex justify-center mb-8">
+                                    <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl p-1 shadow-xl border border-gray-700/50">
+                                        <div className="flex gap-1">
+                                            <button
+                                                onClick={() => setViewMode('week')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${viewMode === 'week'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <Calendar className="w-4 h-4" />
+                                                Week
+                                            </button>
+                                            <button
+                                                onClick={() => setViewMode('month')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${viewMode === 'month'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <CalendarDays className="w-4 h-4" />
+                                                Month
+                                            </button>
+                                            <button
+                                                onClick={() => setViewMode('year')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${viewMode === 'year'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <CalendarRange className="w-4 h-4" />
+                                                Year
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Charts Grid */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+
+                                    {/* Time Spent Chart */}
+                                    <div>
+                                        <h3 className="text-xl font-semibold mb-4 text-gray-200">Time Spent (Hours)</h3>
+                                        <div className="h-64 bg-gray-900/50 rounded-xl p-4">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={getChartData('time')} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                                    <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
+                                                    <YAxis stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
+                                                    <Bar dataKey="value" fill="url(#timeGradient)" radius={[4, 4, 0, 0]} />
+                                                    <defs>
+                                                        <linearGradient id="timeGradient" x1="0" y1="0" x2="0" y2="1">
+                                                            <stop offset="0%" stopColor="#6366f1" />
+                                                            <stop offset="100%" stopColor="#3b82f6" />
+                                                        </linearGradient>
+                                                    </defs>
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+
+                                    {/* Tasks Completed Chart */}
+                                    <div>
+                                        <h3 className="text-xl font-semibold mb-4 text-gray-200">Tasks Completed</h3>
+                                        <div className="h-64 bg-gray-900/50 rounded-xl p-4">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={getChartData('tasks')} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                                    <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
+                                                    <YAxis stroke="#9ca3af" fontSize={12} axisLine={false} tickLine={false} />
+                                                    <Bar dataKey="value" fill="url(#taskGradient)" radius={[4, 4, 0, 0]} />
+                                                    <defs>
+                                                        <linearGradient id="taskGradient" x1="0" y1="0" x2="0" y2="1">
+                                                            <stop offset="0%" stopColor="#10b981" />
+                                                            <stop offset="100%" stopColor="#059669" />
+                                                        </linearGradient>
+                                                    </defs>
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Statistics Cards */}
+                                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+                                    <div className="bg-indigo-900/30 p-4 rounded-lg text-center">
+                                        <div className="text-2xl font-bold text-indigo-300">
+                                            {timeHistory.reduce((sum, session) => sum + (session.totalMinutes || 0), 0)}
+                                        </div>
+                                        <div className="text-sm text-blue-400">Total Minutes</div>
+                                    </div>
+                                    <div className="bg-green-900/30 p-4 rounded-lg text-center">
+                                        <div className="text-2xl font-bold text-green-300">
+                                            {taskHistory.length}
+                                        </div>
+                                        <div className="text-sm text-green-400">Tasks Completed</div>
+                                    </div>
+                                    <div className="bg-purple-900/30 p-4 rounded-lg text-center">
+                                        <div className="text-2xl font-bold text-purple-300">
+                                            {timeHistory.reduce((sum, session) => sum + (session.sessionCount || 0), 0)}
+                                        </div>
+                                        <div className="text-sm text-purple-400">Total Sessions</div>
+                                    </div>
+                                    <div className="bg-orange-900/30 p-4 rounded-lg text-center">
+                                        <div className="text-2xl font-bold text-orange-300">
+                                            {timeHistory.reduce((sum, session) => sum + (session.cycleCount || 0), 0)}
+                                        </div>
+                                        <div className="text-sm text-orange-400">Total Cycles</div>
+                                    </div>
+                                    <div className="bg-red-900/30 p-4 rounded-lg text-center">
+                                        <div className="text-2xl font-bold text-red-300 flex items-center justify-center gap-2">
+                                            <Flame className="w-6 h-6" />
+                                            {longestSessionStreak}
+                                        </div>
+                                        <div className="text-sm text-red-400">Best Streak</div>
+                                    </div>
+                                </div>
+
+                                {/* Data Management Section */}
+                                <div className="mt-8 pt-6 border-t border-gray-700">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-gray-200">Data Management</h3>
+                                            <p className="text-sm text-gray-400 mt-1">
+                                                Your data is automatically saved to your app directory. Share with friends!
+                                            </p>
+                                        </div>
+                                        <div className="space-x-2">
+                                            <label className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200 cursor-pointer">
+                                                Import Data
+                                                <input
+                                                    type="file"
+                                                    accept=".json"
+                                                    onChange={importData}
+                                                    className="hidden"
+                                                />
+                                            </label>
+                                            <button
+                                                onClick={exportData}
+                                                className="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
+                                            >
+                                                Export Data
+                                            </button>
+                                            <button
+                                                onClick={clearAllData}
+                                                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-200"
+                                            >
+                                                Clear All Data
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* ADD THIS NEW SECTION - Individual Clear Options */}
+                                    <div className="mt-4 p-4 bg-gray-700/30 rounded-lg border border-gray-600/30">
+                                        <h4 className="text-md font-medium text-gray-200 mb-3">Clear Specific Data</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm('Clear all work sessions? This will also reset your streak data.')) {
+                                                        setTimeHistory([]);
+                                                        setCurrentSessionStreak(0);
+                                                        setLongestSessionStreak(0);
+                                                        setLastSessionDate(null);
+                                                    }
+                                                }}
+                                                className="px-3 py-2 bg-red-500/80 text-white rounded-md hover:bg-red-500 transition-all duration-200 text-sm"
+                                            >
+                                                Clear Work Sessions
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm('Clear all completed tasks?')) {
+                                                        setTaskHistory([]);
+                                                    }
+                                                }}
+                                                className="px-3 py-2 bg-red-500/80 text-white rounded-md hover:bg-red-500 transition-all duration-200 text-sm"
+                                            >
+                                                Clear Completed Tasks
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm('Reset streak data only? (keeps your session history)')) {
+                                                        setCurrentSessionStreak(0);
+                                                        setLongestSessionStreak(0);
+                                                        setLastSessionDate(null);
+                                                    }
+                                                }}
+                                                className="px-3 py-2 bg-orange-500/80 text-white rounded-md hover:bg-orange-500 transition-all duration-200 text-sm"
+                                            >
+                                                Reset Streaks Only
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-gray-400 mt-2">
+                                            Note: Clearing work sessions will reset streak data since streaks are calculated from session history.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ================================ */}
+                        {/* HISTORY TAB CONTENT */}
+                        {/* ================================ */}
+
+                        {activeTab === 'history' && (
+                            <div>
+                                {/* Attribution */}
+                                <div className="text-1xl font-bold text-white">
+                                    <a href="https://www.flaticon.com/free-icons/stopwatch" title="stopwatch icons">
+                                        Stopwatch icons created by alfanz - Flaticon
+                                    </a>
+                                </div>
+
+                                {/* History Header */}
+                                <div className="bg-gray-800 rounded-xl shadow-xl p-8 mb-6">
+                                    <div className="flex items-center gap-2 mb-6">
+                                        <History className="w-6 h-6 text-indigo-500" />
+                                        <h2 className="text-2xl font-bold text-white">Session History</h2>
+                                    </div>
+
+                                    <div className="flex justify-between items-center mb-6">
+                                        <div>
+                                            <p className="text-gray-300">
+                                                View your completed work sessions organized by time period
+                                            </p>
+                                        </div>
+
+                                        {/* Sound Test Buttons Only */}
+                                        <div className="space-x-2">
+                                            <button
+                                                onClick={() => playBreakWarningSound()}
+                                                className="px-2 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-all duration-200"
+                                            >
+                                                🔔 Test Warning
+                                            </button>
+                                            <button
+                                                onClick={() => playSessionStartSound()}
+                                                className="px-2 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200"
+                                            >
+                                                🎵 Test Start Sound
+                                            </button>
+                                            <button
+                                                onClick={() => playFinishSound()}
+                                                className="px-2 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200"
+                                            >
+                                                🔊 Test Sound
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Time Period Selector */}
+                                <div className="flex justify-center mb-8">
+                                    <div className="bg-gray-800/80 backdrop-blur-sm rounded-2xl p-1 shadow-xl border border-gray-700/50">
+                                        <div className="flex gap-1">
+                                            <button
+                                                onClick={() => setHistoryViewMode('day')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'day'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <Calendar className="w-4 h-4" />
+                                                Day
+                                            </button>
+                                            <button
+                                                onClick={() => setHistoryViewMode('week')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'week'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <Calendar className="w-4 h-4" />
+                                                Week
+                                            </button>
+                                            <button
+                                                onClick={() => setHistoryViewMode('month')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'month'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <CalendarDays className="w-4 h-4" />
+                                                Month
+                                            </button>
+                                            <button
+                                                onClick={() => setHistoryViewMode('year')}
+                                                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-sm flex items-center gap-2 ${historyViewMode === 'year'
+                                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg scale-105'
+                                                    : 'text-gray-300 hover:text-white hover:bg-gray-700/50'
+                                                    }`}
+                                            >
+                                                <CalendarRange className="w-4 h-4" />
+                                                Year
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* History Content */}
+                                {timeHistory.length === 0 && taskHistory.length === 0 ? (
+                                    /* Empty State */
+                                    <div className="text-center py-12 text-gray-400">
+                                        <History className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                                        <p>No history yet. Complete some sessions to see your progress!</p>
+                                    </div>
+                                ) : (
+                                    /* History Grid */
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                                        {/* Work Sessions History */}
+                                        <div className="bg-gray-800 rounded-xl shadow-xl p-6">
+                                            <div className="flex justify-between items-center mb-4">
+                                                <h3 className="text-xl font-semibold text-white">Work Sessions ({timeHistory.length})</h3>
+                                                <button
+                                                    onClick={() => {
+                                                        if (window.confirm('Are you sure you want to delete all work sessions? This will also reset your streak data and cannot be undone.')) {
+                                                            setTimeHistory([]);
+                                                            // Reset streak data when clearing work sessions
+                                                            setCurrentSessionStreak(0);
+                                                            setLongestSessionStreak(0);
+                                                            setLastSessionDate(null);
+                                                        }
+                                                    }}
+                                                    className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-200 text-sm"
+                                                >
+                                                    Clear All
+                                                </button>
+                                            </div>
+
+                                            <div className="bg-gray-800 rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3">
+                                                {timeHistory.length === 0 ? (
+                                                    <p className="text-gray-400 italic text-center py-8">No work sessions recorded yet</p>
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        {groupHistoryByPeriod(timeHistory, historyViewMode).map((period) => (
+                                                            <div key={period.key} className="border border-gray-700 rounded-lg overflow-hidden">
+                                                                {/* Period Header */}
+                                                                <button
+                                                                    onClick={() => toggleTimePeriod(`sessions-${period.key}`)}
+                                                                    className="w-full flex items-center justify-between p-3 bg-gray-700/50 hover:bg-gray-700 transition-all duration-200"
+                                                                >
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className={`transform transition-transform duration-200 ${expandedTimePeriods.has(`sessions-${period.key}`) ? 'rotate-90' : ''
+                                                                            }`}>
+                                                                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                                                            </svg>
+                                                                        </div>
+                                                                        <span className="font-medium text-white">{period.label}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-4">
+                                                                        <span className="text-sm text-gray-400">
+                                                                            {period.items.length} session{period.items.length !== 1 ? 's' : ''}
+                                                                        </span>
+                                                                        <span className="text-sm text-indigo-400 font-medium">
+                                                                            {Math.round(period.items.reduce((sum, item) => sum + (item.totalMinutes || 0), 0))} min
+                                                                        </span>
+                                                                    </div>
+                                                                </button>
+
+                                                                {/* Period Content */}
+                                                                {expandedTimePeriods.has(`sessions-${period.key}`) && (
+                                                                    <div className="p-3 bg-gray-800/50 space-y-2">
+                                                                        {period.items.map((session) => (
+                                                                            <SessionHistoryItem
+                                                                                key={session.id}
+                                                                                session={session}
+                                                                                onDelete={deleteTimeSession}
+                                                                                isExpanded={expandedSessions.has(session.id)}
+                                                                                onToggle={() => {
+                                                                                    const newExpanded = new Set(expandedSessions);
+                                                                                    if (newExpanded.has(session.id)) {
+                                                                                        newExpanded.delete(session.id);
+                                                                                    } else {
+                                                                                        newExpanded.add(session.id);
+                                                                                    }
+                                                                                    setExpandedSessions(newExpanded);
+                                                                                }}
+                                                                            />
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Completed Tasks History */}
+                                        <div className="bg-gray-800 rounded-xl shadow-xl p-6">
+                                            <div className="flex justify-between items-center mb-4">
+                                                <h3 className="text-xl font-semibold text-white">Completed Tasks ({taskHistory.length})</h3>
+                                                <button
+                                                    onClick={() => {
+                                                        if (window.confirm('Are you sure you want to delete all completed tasks? This action cannot be undone.')) {
+                                                            setTaskHistory([]);
+                                                        }
+                                                    }}
+                                                    className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-all duration-200 text-sm"
+                                                >
+                                                    Clear All
+                                                </button>
+                                            </div>
+
+                                            <div className="bg-gray-800 rounded-lg p-4 max-h-[500px] overflow-y-auto space-y-3">
+                                                {taskHistory.length === 0 ? (
+                                                    <p className="text-gray-400 italic text-center py-8">No completed tasks yet</p>
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        {groupHistoryByPeriod(taskHistory, historyViewMode).map((period) => (
+                                                            <div key={period.key} className="border border-gray-700 rounded-lg overflow-hidden">
+                                                                {/* Period Header */}
+                                                                <button
+                                                                    onClick={() => toggleTimePeriod(`tasks-${period.key}`)}
+                                                                    className="w-full flex items-center justify-between p-3 bg-gray-700/50 hover:bg-gray-700 transition-all duration-200"
+                                                                >
+                                                                    <div className="flex items-center gap-3">
+                                                                        <div className={`transform transition-transform duration-200 ${expandedTimePeriods.has(`tasks-${period.key}`) ? 'rotate-90' : ''
+                                                                            }`}>
+                                                                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                                                            </svg>
+                                                                        </div>
+                                                                        <span className="font-medium text-white">{period.label}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-4">
+                                                                        <span className="text-sm text-gray-400">
+                                                                            {period.items.length} task{period.items.length !== 1 ? 's' : ''}
+                                                                        </span>
+                                                                        <span className="text-sm text-emerald-400 font-medium">
+                                                                            {Math.round(period.items.reduce((sum, item) => sum + (item.duration || 0), 0))} min
+                                                                        </span>
+                                                                    </div>
+                                                                </button>
+
+                                                                {/* Period Content */}
+                                                                {expandedTimePeriods.has(`tasks-${period.key}`) && (
+                                                                    <div className="p-3 bg-gray-800/50 space-y-2">
+                                                                        {period.items.map((task) => (
+                                                                            <TaskHistoryItem
+                                                                                key={task.id}
+                                                                                task={task}
+                                                                                onDelete={deleteTask}
+                                                                                isExpanded={expandedTasks.has(task.id)}
+                                                                                onToggle={() => {
+                                                                                    const newExpanded = new Set(expandedTasks);
+                                                                                    if (newExpanded.has(task.id)) {
+                                                                                        newExpanded.delete(task.id);
+                                                                                    } else {
+                                                                                        newExpanded.add(task.id);
+                                                                                    }
+                                                                                    setExpandedTasks(newExpanded);
+                                                                                }}
+                                                                            />
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
-                )}
+                </div >
+                );
             </div>
-        </div >
+        </div>
     );
 };
+
+
 
 // ================================
 // EXPORT COMPONENT
