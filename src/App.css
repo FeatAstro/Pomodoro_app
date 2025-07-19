@@ -2,29 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Acrylic/Glass effect utilities */
-.glass-effect {
+/* Enhanced glass effect for title bar */
+.title-bar-glass {
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(31, 41, 55, 0.85);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+    box-shadow: 0 1px 10px rgba(0, 0, 0, 0.3);
 }
 
-/* Custom scrollbar styles */
-.scrollbar-thin {
-    scrollbar-width: thin;
+/* Smooth transitions for window controls */
+.window-control {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
+.window-control:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }

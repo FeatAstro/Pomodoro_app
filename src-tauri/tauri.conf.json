@@ -16,7 +16,22 @@
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": false,
+        "shadow": false,
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "center": true,
+        "focus": true,
+        "visible": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": false,
+        "tabbingIdentifier": null
       }
     ],
     "security": {
