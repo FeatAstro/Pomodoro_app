@@ -1,4 +1,3 @@
-// Step 2: Add full app
 import React from 'react';
 import TitleBar from './components/pomodoro/part11-titlebar.jsx';
 import PomodoroApp from './components/pomodoro/part10-main.jsx';
