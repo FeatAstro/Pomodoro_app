@@ -297,8 +297,8 @@ export const HistoryTab = () => {
         <div>
             {/* Attribution */}
             <div className="text-center py-4 text-xs text-gray-500">
-                <a href="https://www.flaticon.com/free-icons/stopwatch" title="stopwatch icons" className="hover:text-gray-400">
-                    Stopwatch icons created by alfanz - Flaticon
+                <a href="https://www.flaticon.com/fr/icones-gratuites/fusee" title="fusée icônes" className="hover:text-gray-400">
+                    Rocket icon created by Freepik - Flaticon
                 </a>
             </div>
 
